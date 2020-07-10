@@ -74,7 +74,7 @@ class Indexer:
 
     def update(self, content: str, url: str):
         with self.ix.writer() as writer:
-            writer.update_document(uid=url, content=content)
+            writer.update_document(url=url, content=content)
 
     def clear(self):
         self._clear()
