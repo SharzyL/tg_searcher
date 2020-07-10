@@ -1,0 +1,6 @@
+*.log
+*.swp
+__pycache__
+session
+index
+searcher.yaml
