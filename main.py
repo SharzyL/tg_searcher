@@ -164,6 +164,7 @@ def render_respond_buttons(result, cur_page_num):
 async def download_history():
     for chat_id in chat_ids:
         await bot.send_message(admin_id, f'开始下载 {id_to_title[chat_id]} 的历史记录')
+        logger.info(f'Downloading history from {chat_id}')
         async for message in client.iter_messages(chat_id):
             if message.raw_text and len(message.raw_text.strip()) >= 0:
                 uid = message.id
@@ -185,6 +186,7 @@ async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
         q = db.get('msg-' + str(event.message_id) + '-q')
+        logger.info(f'Query {q} turned to page {page_num}')
         if q:
             start_time = time()
             result = indexer.search(q, page_len=page_len, page_num=page_num)
@@ -233,6 +235,7 @@ async def init_bot():
     for chat_id in chat_ids:
         entity = await client.get_entity(chat_id)
         id_to_title[chat_id] = entity.title
+    logger.info('Bot started')
     await bot.send_message(admin_id, 'I am ready. ')
 
 loop.run_until_complete(init_bot())

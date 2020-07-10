@@ -1,5 +1,6 @@
 *.log
 *.swp
+.idea
 __pycache__
 session
 index
