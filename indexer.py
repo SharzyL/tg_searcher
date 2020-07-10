@@ -7,13 +7,11 @@ import sys
 import os
 import re
 from datetime import datetime
-import jieba
 from jieba.analyse.analyzer import ChineseAnalyzer
-
-os.chdir(Path(sys.argv[0]).parent)
 
 
 class Indexer:
+    # A wrapper of whoosh
 
     def __init__(self, pickle_path='index', index_name='telegram_searcher', from_scratch=False):
         analyzer = ChineseAnalyzer()

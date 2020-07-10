@@ -210,7 +210,6 @@ async def bot_message_handler(event):
         await event.respond('开始下载历史记录', parse_mode='markdown')
         indexer.clear()
         await download_history()
-        await event.respond('下载完成', parse_mode='markdown')
 
     else:
         start_time = time()
