@@ -97,7 +97,7 @@ def get_share_id(chat_id: int) -> int:
     return chat_id if chat_id >= 0 else - chat_id - 1000000000000
 
 
-@client.on(events.NewMessage(from_users=chat_ids))
+@client.on(events.NewMessage(chats=chat_ids))
 async def client_message_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -111,7 +111,7 @@ async def client_message_handler(event):
         )
 
 
-@client.on(events.MessageEdited(from_users=chat_ids))
+@client.on(events.MessageEdited(chats=chat_ids))
 async def client_message_update_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
