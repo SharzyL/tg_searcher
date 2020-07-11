@@ -3,7 +3,6 @@ from whoosh.fields import *
 from whoosh.qparser import QueryParser
 import whoosh.highlight as highlight
 from pathlib import Path
-import sys
 import os
 import re
 from datetime import datetime
