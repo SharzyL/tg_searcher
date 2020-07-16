@@ -31,7 +31,7 @@ git clone https://github.com/SharzyL/tg_searcher.git
 cd tg_searcher
 touch searcher.yaml
 mkdir session
-pip install telethon pyyaml whoosh jieba
+pip install telethon pyyaml whoosh jieba redis
 ```
 
 在 `searcher.yaml` 配置文件中添入如下内容，将各项参数置换成上文提到的实际参数：
