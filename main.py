@@ -6,7 +6,6 @@ import os
 import sys
 from pathlib import Path
 from time import time
-from typing import List
 import argparse
 
 import redis
@@ -14,9 +13,9 @@ import yaml
 from telethon import TelegramClient, events, Button
 
 from indexer import Indexer
+from log import get_logger, log_func
 
 os.chdir(Path(sys.argv[0]).parent)
-
 
 #################################################################################
 # Read arguments and configurations
@@ -27,25 +26,24 @@ parser = argparse.ArgumentParser(description='A server to provide Telegram messa
 parser.add_argument('-c', '--clear', action='store_const', const=True, default=False,
                     help='Build a new index from the scratch')
 parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
-                    help='Specify where the configuraion yaml file lies')
+                    help='Specify where the configuration yaml file lies')
 
 args = parser.parse_args()
 will_clear = args.clear
 config_path = args.config
 
-
-with open('searcher.yaml', 'r') as fp:
+with open('searcher.yaml', 'r', encoding='utf8') as fp:
     config = yaml.safe_load(fp)
-redis_host: str = config['redis']['host']
-redis_port: str = config['redis']['port']
-api_id: int = config['telegram']['api_id']
-api_hash: str = config['telegram']['api_hash']
-bot_token: str = config['telegram']['bot_token']
-admin_id: int = config['telegram']['admin_id']
-chat_ids: List[int] = config['chat_id']
-log_path: str = config['log_path']
-page_len: int = config['search']['page_len']
-welcome_message: str = config['welcome_message']
+redis_host = config['redis']['host']
+redis_port = config['redis']['port']
+api_id = config['telegram']['api_id']
+api_hash = config['telegram']['api_hash']
+bot_token = config['telegram']['bot_token']
+admin_id = config['telegram']['admin_id']
+chat_ids = config['chat_id']
+log_path = config['log_path']
+page_len = config['search']['page_len']
+welcome_message = config['welcome_message']
 
 
 #################################################################################
@@ -53,21 +51,7 @@ welcome_message: str = config['welcome_message']
 #################################################################################
 
 
-def get_logger(name: str, _log_path: str, level=logging.INFO):
-    log_fmt = logging.Formatter(
-        f"%(asctime)s - %(levelname)s: {name}: %(message)s",
-        "%Y %b %d %H:%M:%S"
-    )
-    _logger = logging.getLogger(name)
-    _logger.setLevel(level)
-    fh = logging.FileHandler(f'{_log_path}', encoding='utf8')
-    fh.setLevel(level)
-    fh.setFormatter(log_fmt)
-    _logger.addHandler(fh)
-    return _logger
-
-
-logger = get_logger('bot', log_path, level=logging.INFO)
+logger = get_logger(log_path, level=logging.INFO)
 
 indexer = Indexer(from_scratch=will_clear)
 
@@ -75,11 +59,8 @@ db = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
 
 loop = asyncio.get_event_loop()
 
-client = TelegramClient('session/client', api_id, api_hash, loop=loop)
-client.start()
-
-bot = TelegramClient('session/bot', api_id, api_hash, loop=loop)
-bot.start(bot_token=bot_token)
+client = TelegramClient('session/client', api_id, api_hash, loop=loop).start()
+bot = TelegramClient('session/bot', api_id, api_hash, loop=loop).start(bot_token=bot_token)
 
 id_to_title = dict()  # a dictionary to translate chat id to chat title
 
@@ -98,6 +79,7 @@ def get_share_id(chat_id: int) -> int:
 
 
 @client.on(events.NewMessage(chats=chat_ids))
+@log_func(logger)
 async def client_message_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -112,6 +94,7 @@ async def client_message_handler(event):
 
 
 @client.on(events.MessageEdited(chats=chat_ids))
+@log_func(logger)
 async def client_message_update_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -121,6 +104,7 @@ async def client_message_update_handler(event):
 
 
 @client.on(events.MessageDeleted)
+@log_func(logger)
 async def client_message_delete_handler(event):
     if event.chat_id and event.chat_id in chat_ids:
         for msg_id in event.deleted_ids:
@@ -138,8 +122,8 @@ async def client_message_delete_handler(event):
 def render_respond_text(result, used_time):
     respond = f'共搜索到 {result["total"]} 个结果，用时 {used_time: .3} 秒：\n\n'
     for hit in result['hits']:
-        respond += f'<b>{ id_to_title[hit["chat_id"]] } [{ hit["post_time"] }]</b>\n'
-        respond += f'<a href="{ hit["url"] }">{ hit["highlighted"] }</a>\n'
+        respond += f'<b>{id_to_title[hit["chat_id"]]} [{hit["post_time"]}]</b>\n'
+        respond += f'<a href="{hit["url"]}">{hit["highlighted"]}</a>\n'
     return respond
 
 
@@ -160,6 +144,7 @@ def render_respond_buttons(result, cur_page_num):
     ]
 
 
+@log_func(logger)
 async def download_history():
     for chat_id in chat_ids:
         await bot.send_message(admin_id, f'开始下载 {id_to_title[chat_id]} 的历史记录')
@@ -181,6 +166,7 @@ async def download_history():
 
 
 @bot.on(events.CallbackQuery)
+@log_func(logger)
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
@@ -197,6 +183,7 @@ async def bot_callback_handler(event):
 
 
 @bot.on(events.NewMessage)
+@log_func(logger)
 async def bot_message_handler(event):
     text = event.raw_text
     logger.info(f'User {event.from_id} Queries [{text}]')
@@ -229,13 +216,15 @@ async def bot_message_handler(event):
 #################################################################################
 
 
+@log_func(logger)
 async def init_bot():
-    # put some async initilization actions here
+    # put some async initialization actions here
     for chat_id in chat_ids:
         entity = await client.get_entity(chat_id)
         id_to_title[chat_id] = entity.title
     logger.info('Bot started')
     await bot.send_message(admin_id, 'I am ready. ')
+
 
 loop.run_until_complete(init_bot())
 
