@@ -16,7 +16,7 @@
 
 在 [@Bot Father](https://t.me/BotFather) 中注册一个 bot，获得一个 `token`（形如 `1023456789:AbCd44534523241-dsSD324ljkjldsafgfdgf4dD`）。
 
-向 [@getidsbot](https://t.me/getidsbot) 发送一条消息，获得自己的用户 `id`（形如 `629321234`） 。对于需要提供搜索服务的频道 / 聊天，向 [@getidsbot](https://t.me/getidsbot) 转发这个聊天的一条消息，获得这个聊天的 `id`（形如 `-1001439046799`）。
+向 [@getidsbot](https://t.me/getidsbot) 发送一条消息，获得自己的用户 `id`（形如 `629321234`） 。对于需要提供搜索服务的频道 / 聊天，向 [@get_id_info_bot](https://t.me/get_id_info_bot 转发这个聊天的一条消息，获得这个聊天的 `id`（形如 `-1001439046799`）。
 
 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
 
@@ -62,11 +62,11 @@ welcome_message: 这里是 @sharzy_talk 的搜索 Bot，直接发送你要搜索
 
 运行 `python main.py` ，首次运行时需要使用自己的账号信息登录。运行成功后 bot 会在 Telegram 中发送一条 `I am ready` 消息。
 
-bot 不会自动下载历史消息，需要手动用上面填写的账号向 bot 发送 `\download_history` 。之后发送 / 删除 / 修改消息时，bot 会自行进行对应的操作，无需干预。
+bot 不会自动下载历史消息，需要手动用上面填写的账号向 bot 发送 `/download_history` 。之后发送 / 删除 / 修改消息时，bot 会自行进行对应的操作，无需干预。
 
 ## 说明
 
-在这个 bot 中我们使用了 [jieba](https://github.com/fxsjy/jieba) 库提供的中文分词，使用了 [whoosh](https://whoosh.readthedocs.io) 的默认算法。目前尚不支持高级搜索的语法，也没有对英文做进一步的 tokenize。
+在这个 bot 中我们使用了 [jieba](https://github.com/fxsjy/jieba) 库提供的中文分词，使用了 [whoosh](https://whoosh.readthedocs.io) 的默认算法，也支持 whoosh 自带的[高级搜索功能](https://whoosh.readthedocs.io/en/latest/querylang.html)。
 
 在运行时可以传入 `-c` 参数，从而可以清空之前记录的消息（即清除建立的索引）。如果传入 `-f /path/to/yaml` 参数，bot 会读取 `/path/to/yaml` 位置的配置文件，默认的配置文件目录为 `./searcher.yaml`。
 
