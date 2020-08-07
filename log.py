@@ -2,9 +2,9 @@ import logging
 import traceback
 
 
-def get_logger(_log_path: str, level=logging.INFO):
+def get_logger(_log_path=None, level=logging.INFO):
     log_fmt = logging.Formatter(
-        f"%(asctime)s - %(levelname)s: %(message)s",
+        f"%(asctime)s - %(levelname)s - %(filename)s | %(funcName)s: %(message)s",
         "%Y %b %d %H:%M:%S"
     )
     _logger = logging.getLogger()
@@ -16,7 +16,7 @@ def get_logger(_log_path: str, level=logging.INFO):
     return _logger
 
 
-def log_func(logger):
+def log_exception(logger):
     def wrapper(func):
         async def wrap(*args, **kwargs):
             try:

@@ -12,7 +12,7 @@ import yaml
 from telethon import TelegramClient, events, Button
 
 from indexer import Indexer
-from log import get_logger, log_func
+from log import get_logger, log_exception
 
 os.chdir(Path(sys.argv[0]).parent)
 
@@ -78,7 +78,7 @@ def get_share_id(chat_id: int) -> int:
 
 
 @client.on(events.NewMessage(chats=chat_ids))
-@log_func(logger)
+@log_exception(logger)
 async def client_message_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -93,7 +93,7 @@ async def client_message_handler(event):
 
 
 @client.on(events.MessageEdited(chats=chat_ids))
-@log_func(logger)
+@log_exception(logger)
 async def client_message_update_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -103,7 +103,7 @@ async def client_message_update_handler(event):
 
 
 @client.on(events.MessageDeleted)
-@log_func(logger)
+@log_exception(logger)
 async def client_message_delete_handler(event):
     if event.chat_id and event.chat_id in chat_ids:
         for msg_id in event.deleted_ids:
@@ -143,7 +143,7 @@ def render_respond_buttons(result, cur_page_num):
     ]
 
 
-@log_func(logger)
+@log_exception(logger)
 async def download_history():
     for chat_id in chat_ids:
         await bot.send_message(admin_id, f'开始下载 {id_to_title[chat_id]} 的历史记录')
@@ -165,7 +165,7 @@ async def download_history():
 
 
 @bot.on(events.CallbackQuery)
-@log_func(logger)
+@log_exception(logger)
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
@@ -182,7 +182,7 @@ async def bot_callback_handler(event):
 
 
 @bot.on(events.NewMessage)
-@log_func(logger)
+@log_exception(logger)
 async def bot_message_handler(event):
     text = event.raw_text
     logger.info(f'User {event.from_id} Queries [{text}]')
@@ -215,7 +215,7 @@ async def bot_message_handler(event):
 #################################################################################
 
 
-@log_func(logger)
+@log_exception(logger)
 async def init_bot():
     # put some async initialization actions here
     for chat_id in chat_ids:
