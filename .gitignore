@@ -5,4 +5,4 @@ test.py
 __pycache__
 session
 index
-searcher.yaml
+*.yaml

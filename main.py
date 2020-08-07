@@ -31,7 +31,7 @@ args = parser.parse_args()
 will_clear = args.clear
 config_path = args.config
 
-with open('searcher.yaml', 'r', encoding='utf8') as fp:
+with open(config_path, 'r', encoding='utf8') as fp:
     config = yaml.safe_load(fp)
 redis_host = config['redis']['host']
 redis_port = config['redis']['port']

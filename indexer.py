@@ -18,7 +18,7 @@ class Indexer:
             content=TEXT(stored=True, analyzer=analyzer),
             url=ID(stored=True, unique=True),
             chat_id=STORED(),
-            post_time=DATETIME(stored=True),
+            post_time=DATETIME(stored=True, sortable=True),
         )
 
         if not Path(pickle_path).exists():
@@ -54,7 +54,8 @@ class Indexer:
     def search(self, query: str, page_len, page_num=1):
         q = self.query_parser.parse(query)
         with self.ix.searcher() as searcher:
-            result_page = searcher.search_page(q, page_num, page_len)
+            result_page = searcher.search_page(q, page_num, page_len,
+                                               sortedby='post_time', reverse=True)
 
             return {
                 'total': len(result_page),
@@ -72,8 +73,15 @@ class Indexer:
             writer.delete_by_term('url', url)
 
     def update(self, content: str, url: str):
+        with self.ix.searcher() as searcher:
+            document = searcher.document(url=url)
         with self.ix.writer() as writer:
-            writer.update_document(url=url, content=content)
+            writer.update_document(
+                content=content,
+                url=url,
+                chat_id=document['chat_id'],
+                post_time=document['post_time'],
+            )
 
     def clear(self):
         self._clear()
