@@ -16,7 +16,7 @@
 
 在 [@Bot Father](https://t.me/BotFather) 中注册一个 bot，获得一个 `token`（形如 `1023456789:AbCd44534523241-dsSD324ljkjldsafgfdgf4dD`）。
 
-向 [@getidsbot](https://t.me/getidsbot) 发送一条消息，获得自己的用户 `id`（形如 `629321234`） 。对于需要提供搜索服务的频道 / 聊天，向 [@get_id_info_bot](https://t.me/get_id_info_bot 转发这个聊天的一条消息，获得这个聊天的 `id`（形如 `-1001439046799`）。
+向 [@getidsbot](https://t.me/getidsbot) 发送一条消息，获得自己的用户 `id`（形如 `629321234`） 。对于需要提供搜索服务的频道 / 聊天，向 [@get_id_info_bot](https://t.me/get_id_info_bot) 转发这个聊天的一条消息，获得这个聊天的 `id`（形如 `-1001439046799`）。
 
 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
 
