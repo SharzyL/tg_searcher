@@ -34,7 +34,9 @@ pip install telethon pyyaml whoosh jieba redis
 
 运行 `python main.py` ，首次运行时需要使用自己的账号信息登录。运行成功后 bot 会在 Telegram 中发送一条 `I am ready` 消息。
 
-bot 不会自动下载历史消息，需要使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 。之后发送 / 删除 / 修改消息时，bot 会自行进行对应的操作，无需干预。
+bot 不会自动下载历史消息，使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 可以让 bot 从头开始下载历史消息。之后发送 / 删除 / 修改消息时，bot 会自行更新数据库，无需干预。
+
+如果在配置文件中指定 `private_mode: true`，那么除了在 `private_whitelist` 中指定 id 的用户，其它用户无法看到搜索到的消息的内容。
 
 ## 说明
 
