@@ -24,45 +24,17 @@
 
 ### 运行
 
-将仓库代码克隆到服务器上，并创建 `searcher.yaml` 配置文件；创建 `session` 目录以供储存运行时的 session 文件；安装相关的 python 库。
+将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml.example`；安装相关的 python 库。
 
 ```shell script
 git clone https://github.com/SharzyL/tg_searcher.git
 cd tg_searcher
-touch searcher.yaml
-mkdir session
 pip install telethon pyyaml whoosh jieba redis
-```
-
-在 `searcher.yaml` 配置文件中添入如下内容，将各项参数置换成上文提到的实际参数：
-
-```yaml
-redis:
-  host: localhost  # redis 运行的主机
-  port: 6379  # redis 提供的端口
-
-telegram:
-  api_id: 1430968
-  api_hash: 07689061c27182818012e05c1987a998
-  admin_id: 629321234
-  bot_token: 1023456789:AbCd44534523241-dsSD324ljkjafgfdgf4dD
-
-chat_id:
-  - -1001439046799  # 在每一行中填写需要进行搜索的聊天的 id，可以填写多个或一个
-  - -1001496719082
-
-log_path: bot.log  # 日志输出的路径，相对于 repo 的根目录
-
-search:
-  page_len: 10  # 输出搜索结果时每页的输出数量
-
-welcome_message: 这里是 @sharzy_talk 的搜索 Bot，直接发送你要搜索的内容即可  # 用户启动 bot 时的欢迎信息
-
 ```
 
 运行 `python main.py` ，首次运行时需要使用自己的账号信息登录。运行成功后 bot 会在 Telegram 中发送一条 `I am ready` 消息。
 
-bot 不会自动下载历史消息，需要手动用上面填写的账号向 bot 发送 `/download_history` 。之后发送 / 删除 / 修改消息时，bot 会自行进行对应的操作，无需干预。
+bot 不会自动下载历史消息，需要使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 。之后发送 / 删除 / 修改消息时，bot 会自行进行对应的操作，无需干预。
 
 ## 说明
 

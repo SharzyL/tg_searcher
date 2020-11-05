@@ -26,23 +26,29 @@ parser.add_argument('-c', '--clear', action='store_const', const=True, default=F
                     help='Build a new index from the scratch')
 parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
                     help='Specify where the configuration yaml file lies')
+parser.add_argument('-l', '--log', action='store', default=None,
+                    help='The path of logs')
 
 args = parser.parse_args()
 will_clear = args.clear
 config_path = args.config
+log_path = args.log
 
 with open(config_path, 'r', encoding='utf8') as fp:
     config = yaml.safe_load(fp)
-redis_host = config['redis']['host']
-redis_port = config['redis']['port']
+redis_host = config.get('redis', {}).get('host', 'localhost')
+redis_port = config.get('redis', {}).get('port', '6379')
 api_id = config['telegram']['api_id']
 api_hash = config['telegram']['api_hash']
 bot_token = config['telegram']['bot_token']
 admin_id = config['telegram']['admin_id']
 chat_ids = config['chat_id']
-log_path = config['log_path']
-page_len = config['search']['page_len']
-welcome_message = config['welcome_message']
+page_len = config.get('search', {}).get('page_len', 10)
+welcome_message = config.get('welcome_message', 'Welcome')
+
+name = config.get('name', '')
+private_mode = config.get('private_mode', False)
+private_whitelist = config.get('private_whitelist', [])
 
 
 #################################################################################
@@ -50,16 +56,20 @@ welcome_message = config['welcome_message']
 #################################################################################
 
 
-logger = get_logger(log_path, level=logging.INFO)
-
-indexer = Indexer(from_scratch=will_clear)
+logging.basicConfig(level=logging.INFO)
+logger = get_logger(log_path)
+indexer = Indexer(from_scratch=will_clear, index_name=f'{name}_index')
 
 db = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
 
 loop = asyncio.get_event_loop()
 
-client = TelegramClient('session/client', api_id, api_hash, loop=loop).start()
-bot = TelegramClient('session/bot', api_id, api_hash, loop=loop).start(bot_token=bot_token)
+session_dir = Path(f'{name}_session')
+if not session_dir.exists():
+    session_dir.mkdir()
+
+client = TelegramClient(f'{name}_session/client', api_id, api_hash, loop=loop).start()
+bot = TelegramClient(f'{name}_session/bot', api_id, api_hash, loop=loop).start(bot_token=bot_token)
 
 id_to_title = dict()  # a dictionary to translate chat id to chat title
 
@@ -102,7 +112,7 @@ async def client_message_update_handler(event):
         indexer.update(url=url, content=strip_content(event.raw_text))
 
 
-@client.on(events.MessageDeleted)
+@client.on(events.MessageDeleted())
 @log_exception(logger)
 async def client_message_delete_handler(event):
     if event.chat_id and event.chat_id in chat_ids:
@@ -118,11 +128,14 @@ async def client_message_delete_handler(event):
 #################################################################################
 
 
-def render_respond_text(result, used_time):
+def render_respond_text(result, used_time, is_private=False):
     respond = f'共搜索到 {result["total"]} 个结果，用时 {used_time: .3} 秒：\n\n'
     for hit in result['hits']:
         respond += f'<b>{id_to_title[hit["chat_id"]]} [{hit["post_time"]}]</b>\n'
-        respond += f'<a href="{hit["url"]}">{hit["highlighted"]}</a>\n'
+        if is_private:
+            respond += f'{hit["url"]}\n'
+        else:
+            respond += f'<a href="{hit["url"]}">{hit["highlighted"]}</a>\n'
     return respond
 
 
@@ -164,7 +177,7 @@ async def download_history():
         await bot.send_message(admin_id, '下载完成')
 
 
-@bot.on(events.CallbackQuery)
+@bot.on(events.CallbackQuery())
 @log_exception(logger)
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
@@ -181,7 +194,7 @@ async def bot_callback_handler(event):
     await event.answer()
 
 
-@bot.on(events.NewMessage)
+@bot.on(events.NewMessage())
 @log_exception(logger)
 async def bot_message_handler(event):
     text = event.raw_text
@@ -203,7 +216,8 @@ async def bot_message_handler(event):
         q = event.raw_text
         result = indexer.search(q, page_len=page_len, page_num=1)
         used_time = time() - start_time
-        respond = render_respond_text(result, used_time)
+        is_private = private_mode and event.chat_id not in private_whitelist
+        respond = render_respond_text(result, used_time, is_private)
         buttons = render_respond_buttons(result, 1)
         msg = await event.respond(respond, parse_mode='html', buttons=buttons)
 
@@ -219,6 +233,7 @@ async def bot_message_handler(event):
 async def init_bot():
     # put some async initialization actions here
     for chat_id in chat_ids:
+        print(chat_id)
         entity = await client.get_entity(chat_id)
         id_to_title[chat_id] = entity.title
     logger.info('Bot started')

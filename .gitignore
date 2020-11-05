@@ -3,6 +3,6 @@
 .idea
 test.py
 __pycache__
-session
-index
+*_session
 *.yaml
+venv

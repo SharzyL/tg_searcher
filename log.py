@@ -1,15 +1,14 @@
-import logging
 import traceback
+import logging
 
 
-def get_logger(_log_path=None, level=logging.INFO):
+def get_logger(_log_path=None, level=logging.DEBUG):
     log_fmt = logging.Formatter(
-        f"%(asctime)s - %(levelname)s - %(filename)s | %(funcName)s: %(message)s",
+        "%(asctime)s - %(levelname)s - %(filename)s | %(funcName)s: %(message)s",
         "%Y %b %d %H:%M:%S"
     )
-    _logger = logging.getLogger()
-    _logger.setLevel(level)
-    fh = logging.FileHandler(f'{_log_path}', encoding='utf8')
+    _logger = logging.getLogger(__name__)
+    fh = logging.FileHandler(f'{_log_path}', encoding='utf8') if _log_path else logging.StreamHandler()
     fh.setLevel(level)
     fh.setFormatter(log_fmt)
     _logger.addHandler(fh)
