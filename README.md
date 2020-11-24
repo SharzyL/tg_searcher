@@ -36,7 +36,7 @@ pip install telethon pyyaml whoosh jieba redis
 
 bot 不会自动下载历史消息，使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 可以让 bot 从头开始下载历史消息。之后发送 / 删除 / 修改消息时，bot 会自行更新数据库，无需干预。
 
-如果在配置文件中指定 `private_mode: true`，那么除了在 `private_whitelist` 中指定 id 的用户，其它用户无法看到搜索到的消息的内容。
+如果在配置文件中指定 `private_mode: true`，那么除了在 `private_whitelist` 中指定 id 的用户，其它用户无法看到搜索到的消息的内容。如果指定 `random_mode: true`，那么当用户分送 `/random` 指令时，会随机返回一条已索引消息。
 
 ## 说明
 
