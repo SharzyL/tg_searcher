@@ -50,6 +50,7 @@ name = config.get('name', '')
 private_mode = config.get('private_mode', False)
 private_whitelist = config.get('private_whitelist', [])
 
+random_mode = config.get('random_mode', False)
 
 #################################################################################
 # Prepare loggers, client connections, and 
@@ -198,7 +199,9 @@ async def bot_callback_handler(event):
 @log_exception(logger)
 async def bot_message_handler(event):
     text = event.raw_text
-    logger.info(f'User {event.from_id} Queries [{text}]')
+    is_private = private_mode and event.chat_id not in private_whitelist
+    logger.info(f'User {event.chat_id} Queries [{text}]')
+    start_time = time()
 
     if not (event.raw_text and event.raw_text.strip()):
         return
@@ -206,17 +209,21 @@ async def bot_message_handler(event):
     elif event.raw_text.startswith('/start'):
         await event.respond(welcome_message, parse_mode='markdown')
 
+    elif event.raw_text.startswith('/random') and random_mode:
+        doc = indexer.retrieve_random_document()
+        respond = f'Random message from <b>{id_to_title[doc["chat_id"]]} [{doc["post_time"]}]</b>\n'
+        respond += f'{doc["url"]}\n'
+        await event.respond(respond, parse_mode='html')
+
     elif event.raw_text.startswith('/download_history') and event.chat_id == admin_id:
         await event.respond('开始下载历史记录', parse_mode='markdown')
         indexer.clear()
         await download_history()
 
     else:
-        start_time = time()
         q = event.raw_text
         result = indexer.search(q, page_len=page_len, page_num=1)
         used_time = time() - start_time
-        is_private = private_mode and event.chat_id not in private_whitelist
         respond = render_respond_text(result, used_time, is_private)
         buttons = render_respond_buttons(result, 1)
         msg = await event.respond(respond, parse_mode='html', buttons=buttons)

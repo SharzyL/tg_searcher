@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from jieba.analyse.analyzer import ChineseAnalyzer
 
+import random
 
 class Indexer:
     # A wrapper of whoosh
@@ -50,6 +51,10 @@ class Indexer:
                 chat_id=chat_id,
                 post_time=datetime.fromtimestamp(post_timestamp)
             )
+
+    def retrieve_random_document(self):
+        with self.ix.searcher() as searcher:
+            return random.choice(list(searcher.documents()))
 
     def search(self, query: str, page_len, page_num=1):
         q = self.query_parser.parse(query)
