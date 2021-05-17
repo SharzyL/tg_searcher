@@ -6,3 +6,4 @@ __pycache__
 *_session
 *.yaml
 venv
+index

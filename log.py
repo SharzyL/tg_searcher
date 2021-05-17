@@ -8,6 +8,7 @@ def get_logger(_log_path=None, level=logging.DEBUG):
         "%Y %b %d %H:%M:%S"
     )
     _logger = logging.getLogger(__name__)
+    _logger.setLevel(level)
     fh = logging.FileHandler(f'{_log_path}', encoding='utf8') if _log_path else logging.StreamHandler()
     fh.setLevel(level)
     fh.setFormatter(log_fmt)

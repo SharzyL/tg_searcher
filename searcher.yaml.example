@@ -8,6 +8,11 @@ telegram:
   admin_id: 629321234
   bot_token: 1023456789:AbCd44534523241-dsSD324ljkjafgfdgf4dD
 
+proxy:
+  protocol: http  # http or socks5, socks4
+  host: localhost  # or something like 127.0.0.1
+  port: 1080
+
 chat_id:
   - -1001439046799  # 在每一行中填写需要进行搜索的聊天的 id，可以填写多个或一个
   - -1001496719082

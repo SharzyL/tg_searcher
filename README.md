@@ -24,7 +24,7 @@
 
 ### 运行
 
-将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml.example`；安装相关的 python 库。
+将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml`；安装相关的 python 库。
 
 ```shell script
 git clone https://github.com/SharzyL/tg_searcher.git

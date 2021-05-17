@@ -46,6 +46,15 @@ chat_ids = config['chat_id']
 page_len = config.get('search', {}).get('page_len', 10)
 welcome_message = config.get('welcome_message', 'Welcome')
 
+proxy_protocol = config.get('proxy', {}).get('protocol', None)
+proxy_host = config.get('proxy', {}).get('host', None)
+proxy_port = config.get('proxy', {}).get('port', None)
+
+proxy = None
+if proxy_protocol and proxy_host and proxy_port:
+    proxy = (proxy_protocol, proxy_host, proxy_port)
+
+
 name = config.get('name', '')
 private_mode = config.get('private_mode', False)
 private_whitelist = config.get('private_whitelist', [])
@@ -69,8 +78,8 @@ session_dir = Path(f'{name}_session')
 if not session_dir.exists():
     session_dir.mkdir()
 
-client = TelegramClient(f'{name}_session/client', api_id, api_hash, loop=loop).start()
-bot = TelegramClient(f'{name}_session/bot', api_id, api_hash, loop=loop).start(bot_token=bot_token)
+client = TelegramClient(f'{name}_session/client', api_id, api_hash, loop=loop, proxy=proxy).start()
+bot = TelegramClient(f'{name}_session/bot', api_id, api_hash, loop=loop, proxy=proxy).start(bot_token=bot_token)
 
 id_to_title = dict()  # a dictionary to translate chat id to chat title
 
