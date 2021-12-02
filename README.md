@@ -29,7 +29,7 @@
 ```shell script
 git clone https://github.com/SharzyL/tg_searcher.git
 cd tg_searcher
-pip install telethon pyyaml whoosh jieba redis
+pip install -r requirement.txt
 ```
 
 运行 `python main.py` ，首次运行时需要使用自己的账号信息登录。运行成功后 bot 会在 Telegram 中发送一条 `I am ready` 消息。
