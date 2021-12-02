@@ -1,19 +1,19 @@
+from pathlib import Path
+import os
+from typing import Tuple, List
+from datetime import datetime
+import random
+
 from whoosh.index import create_in, exists_in, open_dir
 from whoosh.fields import *
 from whoosh.qparser import QueryParser
 import whoosh.highlight as highlight
-from pathlib import Path
-import os
-import re
-from datetime import datetime
 from jieba.analyse.analyzer import ChineseAnalyzer
-
-import random
 
 class Indexer:
     # A wrapper of whoosh
 
-    def __init__(self, pickle_path='index', index_name='telegram_searcher', from_scratch=False):
+    def __init__(self, pickle_path, index_name, from_scratch=False):
         analyzer = ChineseAnalyzer()
         schema = Schema(
             content=TEXT(stored=True, analyzer=analyzer),

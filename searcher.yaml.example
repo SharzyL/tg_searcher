@@ -17,8 +17,6 @@ chat_id:
   - -1001439046799  # 在每一行中填写需要进行搜索的聊天的 id，可以填写多个或一个
   - -1001496719082
 
-log_path: bot.log  # 日志输出的路径，相对于 repo 的根目录，如果删除，则将日志输出到标准
-
 search:
   page_len: 10  # 输出搜索结果时每页的输出数量，默认为 10
 
@@ -31,3 +29,5 @@ private_whitelist:  # private mode 的白名单，在此名单中的用户总可
   - 312421344
 
 random_mode: true  # 如果设置为 true，当用户发送 /random 指令时，会随机返回一条已索引消息的链接
+
+runtime_dir: /var/lib/tg_searcher  # 存储 Telegram session 和消息索引文件的目录

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from time import time
 import argparse
+from datetime import datetime
 
 import redis
 import yaml
@@ -26,13 +27,10 @@ parser.add_argument('-c', '--clear', action='store_const', const=True, default=F
                     help='Build a new index from the scratch')
 parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
                     help='Specify where the configuration yaml file lies')
-parser.add_argument('-l', '--log', action='store', default=None,
-                    help='The path of logs')
 
 args = parser.parse_args()
 will_clear = args.clear
 config_path = args.config
-log_path = args.log
 
 with open(config_path, 'r', encoding='utf8') as fp:
     config = yaml.safe_load(fp)
@@ -47,8 +45,11 @@ page_len = config.get('search', {}).get('page_len', 10)
 welcome_message = config.get('welcome_message', 'Welcome')
 
 proxy_protocol = config.get('proxy', {}).get('protocol', None)
+assert proxy_protocol in ('socks5', 'socks4', 'http')
 proxy_host = config.get('proxy', {}).get('host', None)
 proxy_port = config.get('proxy', {}).get('port', None)
+
+runtime_dir = Path(config.get('runtime_dir', '.'))
 
 proxy = None
 if proxy_protocol and proxy_host and proxy_port:
@@ -65,21 +66,26 @@ random_mode = config.get('random_mode', False)
 # Prepare loggers, client connections, and 
 #################################################################################
 
+if not (Path(runtime_dir) / name).exists():
+    (Path(runtime_dir) / name).mkdir()
+session_dir = Path(runtime_dir) / name / 'session'
+index_dir = Path(runtime_dir) / name / 'index'
+if not session_dir.exists():
+    session_dir.mkdir()
+if not index_dir.exists():
+    index_dir.mkdir()
 
 logging.basicConfig(level=logging.INFO)
-logger = get_logger(log_path)
-indexer = Indexer(from_scratch=will_clear, index_name=f'{name}_index')
+logger = get_logger()
+indexer = Indexer(pickle_path=index_dir, from_scratch=will_clear, index_name=f'{name}_index')
 
 db = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
 
 loop = asyncio.get_event_loop()
 
-session_dir = Path(f'{name}_session')
-if not session_dir.exists():
-    session_dir.mkdir()
-
-client = TelegramClient(f'{name}_session/client', api_id, api_hash, loop=loop, proxy=proxy).start()
-bot = TelegramClient(f'{name}_session/bot', api_id, api_hash, loop=loop, proxy=proxy).start(bot_token=bot_token)
+client = TelegramClient(str(session_dir / 'client.session'), api_id, api_hash, loop=loop, proxy=proxy).start()
+bot = TelegramClient(str(session_dir / 'bot.session'), api_id, api_hash, loop=loop, proxy=proxy)\
+    .start(bot_token=bot_token)
 
 id_to_title = dict()  # a dictionary to translate chat id to chat title
 
@@ -249,7 +255,6 @@ async def bot_message_handler(event):
 async def init_bot():
     # put some async initialization actions here
     for chat_id in chat_ids:
-        print(chat_id)
         entity = await client.get_entity(chat_id)
         id_to_title[chat_id] = entity.title
     logger.info('Bot started')
