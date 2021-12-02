@@ -173,23 +173,35 @@ def render_respond_buttons(result, cur_page_num):
 
 
 @log_exception(logger)
-async def download_history():
+async def download_history(min_id=None, max_id=None):
     for chat_id in chat_ids:
         await bot.send_message(admin_id, f'开始下载 {id_to_title[chat_id]} 的历史记录')
-        logger.info(f'Downloading history from {chat_id}')
-        async for message in client.iter_messages(chat_id):
-            if message.raw_text and len(message.raw_text.strip()) >= 0:
-                uid = message.id
-                if uid % 100 == 0:
-                    await bot.send_message(admin_id, f'还需下载 {uid} 条消息')
-                share_id = get_share_id(chat_id)
-                url = f'https://t.me/c/{share_id}/{message.id}'
-                indexer.index(
-                    content=strip_content(message.raw_text),
-                    url=url,
-                    chat_id=chat_id,
-                    post_timestamp=message.date.timestamp(),
-                )
+        logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
+        with indexer.ix.writer() as writer:
+            iter_args = {}
+            if min_id is not None:
+                iter_args['min_id'] = min_id
+            if max_id is not None:
+                iter_args['max_id'] = max_id
+
+            progress_msg = None
+            async for message in client.iter_messages(chat_id, **iter_args):
+                if message.raw_text and len(message.raw_text.strip()) >= 0:
+                    uid = message.id
+                    if progress_msg is None:
+                        progress_msg = await bot.send_message(admin_id, f'还需下载 {uid} 条消息')
+
+                    if uid % 100 == 0:
+                        await bot.edit_message(admin_id, progress_msg, f'还需下载 {uid} 条消息')
+                    share_id = get_share_id(chat_id)
+                    url = f'https://t.me/c/{share_id}/{message.id}'
+                    writer.add_document(
+                        content=strip_content(message.raw_text),
+                        url=url,
+                        chat_id=chat_id,
+                        post_time=datetime.fromtimestamp(message.date.timestamp())
+                    )
+        logger.info(f'Complete downloading history from {chat_id}')
         await bot.send_message(admin_id, '下载完成')
 
 
@@ -231,9 +243,11 @@ async def bot_message_handler(event):
         await event.respond(respond, parse_mode='html')
 
     elif event.raw_text.startswith('/download_history') and event.chat_id == admin_id:
-        await event.respond('开始下载历史记录', parse_mode='markdown')
-        indexer.clear()
-        await download_history()
+        download_args = event.raw_text.split()[1:]
+        await event.respond('开始下载历史记录')
+        if len(download_args) == 0:
+            indexer.clear()
+        await download_history(*download_args)
 
     else:
         q = event.raw_text
