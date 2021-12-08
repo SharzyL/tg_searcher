@@ -1,11 +1,11 @@
 from pathlib import Path
 import os
-from typing import Tuple, List
+import re
 from datetime import datetime
 import random
 
 from whoosh.index import create_in, exists_in, open_dir
-from whoosh.fields import *
+from whoosh.fields import Schema, TEXT, ID, STORED, DATETIME
 from whoosh.qparser import QueryParser
 import whoosh.highlight as highlight
 from jieba.analyse.analyzer import ChineseAnalyzer
