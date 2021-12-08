@@ -180,9 +180,9 @@ async def download_history(min_id=None, max_id=None):
         with indexer.ix.writer() as writer:
             iter_args = {}
             if min_id is not None:
-                iter_args['min_id'] = min_id
+                iter_args['min_id'] = int(min_id)
             if max_id is not None:
-                iter_args['max_id'] = max_id
+                iter_args['max_id'] = int(max_id)
 
             progress_msg = None
             async for message in client.iter_messages(chat_id, **iter_args):
