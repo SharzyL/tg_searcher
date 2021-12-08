@@ -13,7 +13,8 @@ import yaml
 from telethon import TelegramClient, events, Button
 
 from indexer import Indexer
-from log import get_logger, log_exception
+from log import get_logger
+from utils import strip_content, get_share_id, format_entity_name
 
 os.chdir(Path(sys.argv[0]).parent)
 
@@ -39,8 +40,8 @@ redis_port = config.get('redis', {}).get('port', '6379')
 api_id = config['telegram']['api_id']
 api_hash = config['telegram']['api_hash']
 bot_token = config['telegram']['bot_token']
-admin_id = config['telegram']['admin_id']
-chat_ids = config['chat_id']
+admin_id = get_share_id(config['telegram']['admin_id'])
+chat_ids = list(map(get_share_id, config['chat_id']))
 page_len = config.get('search', {}).get('page_len', 10)
 welcome_message = config.get('welcome_message', 'Welcome')
 
@@ -94,17 +95,7 @@ id_to_title = dict()  # a dictionary to translate chat id to chat title
 # Handle message from the channel
 #################################################################################
 
-
-def strip_content(content: str) -> str:
-    return html.escape(content).replace('\n', ' ')
-
-
-def get_share_id(chat_id: int) -> int:
-    return chat_id if chat_id >= 0 else - chat_id - 1000000000000
-
-
 @client.on(events.NewMessage(chats=chat_ids))
-@log_exception(logger)
 async def client_message_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -119,7 +110,6 @@ async def client_message_handler(event):
 
 
 @client.on(events.MessageEdited(chats=chat_ids))
-@log_exception(logger)
 async def client_message_update_handler(event):
     if event.raw_text and len(event.raw_text.strip()) >= 0:
         share_id = get_share_id(event.chat_id)
@@ -129,7 +119,6 @@ async def client_message_update_handler(event):
 
 
 @client.on(events.MessageDeleted())
-@log_exception(logger)
 async def client_message_delete_handler(event):
     if event.chat_id and event.chat_id in chat_ids:
         for msg_id in event.deleted_ids:
@@ -172,27 +161,22 @@ def render_respond_buttons(result, cur_page_num):
     ]
 
 
-@log_exception(logger)
-async def download_history(min_id=None, max_id=None):
+async def download_history(min_id, max_id):
     for chat_id in chat_ids:
         await bot.send_message(admin_id, f'开始下载 {id_to_title[chat_id]} 的历史记录')
         logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
         with indexer.ix.writer() as writer:
-            iter_args = {}
-            if min_id is not None:
-                iter_args['min_id'] = int(min_id)
-            if max_id is not None:
-                iter_args['max_id'] = int(max_id)
-
             progress_msg = None
-            async for message in client.iter_messages(chat_id, **iter_args):
+            async for message in client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
+                # FIXME: it seems that iterating over PM return nothing?
                 if message.raw_text and len(message.raw_text.strip()) >= 0:
                     uid = message.id
+                    remaining_msg_cnt = uid - min_id
                     if progress_msg is None:
-                        progress_msg = await bot.send_message(admin_id, f'还需下载 {uid} 条消息')
+                        progress_msg = await bot.send_message(admin_id, f'还需下载 {remaining_msg_cnt} 条消息')
 
-                    if uid % 100 == 0:
-                        await bot.edit_message(admin_id, progress_msg, f'还需下载 {uid} 条消息')
+                    if remaining_msg_cnt % 100 == 0:
+                        await bot.edit_message(admin_id, progress_msg, f'还需下载 {remaining_msg_cnt} 条消息')
                     share_id = get_share_id(chat_id)
                     url = f'https://t.me/c/{share_id}/{message.id}'
                     writer.add_document(
@@ -206,7 +190,6 @@ async def download_history(min_id=None, max_id=None):
 
 
 @bot.on(events.CallbackQuery())
-@log_exception(logger)
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
@@ -223,41 +206,46 @@ async def bot_callback_handler(event):
 
 
 @bot.on(events.NewMessage())
-@log_exception(logger)
 async def bot_message_handler(event):
-    text = event.raw_text
-    is_private = private_mode and event.chat_id not in private_whitelist
-    logger.info(f'User {event.chat_id} Queries [{text}]')
-    start_time = time()
+    try:
+        text = event.raw_text
+        is_private = private_mode and event.chat_id not in private_whitelist
+        logger.info(f'User {event.chat_id} Queries [{text}]')
+        start_time = time()
 
-    if not (event.raw_text and event.raw_text.strip()):
-        return
+        if not (event.raw_text and event.raw_text.strip()):
+            return
 
-    elif event.raw_text.startswith('/start'):
-        await event.respond(welcome_message, parse_mode='markdown')
+        elif event.raw_text.startswith('/start'):
+            await event.respond(welcome_message, parse_mode='markdown')
 
-    elif event.raw_text.startswith('/random') and random_mode:
-        doc = indexer.retrieve_random_document()
-        respond = f'Random message from <b>{id_to_title[doc["chat_id"]]} [{doc["post_time"]}]</b>\n'
-        respond += f'{doc["url"]}\n'
-        await event.respond(respond, parse_mode='html')
+        elif event.raw_text.startswith('/random') and random_mode:
+            doc = indexer.retrieve_random_document()
+            respond = f'Random message from <b>{id_to_title[doc["chat_id"]]} [{doc["post_time"]}]</b>\n'
+            respond += f'{doc["url"]}\n'
+            await event.respond(respond, parse_mode='html')
 
-    elif event.raw_text.startswith('/download_history') and event.chat_id == admin_id:
-        download_args = event.raw_text.split()[1:]
-        await event.respond('开始下载历史记录')
-        if len(download_args) == 0:
-            indexer.clear()
-        await download_history(*download_args)
+        elif event.raw_text.startswith('/download_history') and event.chat_id == admin_id:
+            download_args = event.raw_text.split()
+            min_id = max(int(download_args[1]), 1) if len(download_args) > 1 else 1
+            max_id = int(download_args[2]) if len(download_args) > 2 else 1 << 31 - 1
+            await event.respond('开始下载历史记录')
+            if len(download_args) == 0:
+                indexer.clear()
+            await download_history(min_id=min_id, max_id=max_id)
 
-    else:
-        q = event.raw_text
-        result = indexer.search(q, page_len=page_len, page_num=1)
-        used_time = time() - start_time
-        respond = render_respond_text(result, used_time, is_private)
-        buttons = render_respond_buttons(result, 1)
-        msg = await event.respond(respond, parse_mode='html', buttons=buttons)
+        else:
+            q = event.raw_text
+            result = indexer.search(q, page_len=page_len, page_num=1)
+            used_time = time() - start_time
+            respond = render_respond_text(result, used_time, is_private)
+            buttons = render_respond_buttons(result, 1)
+            msg = await event.respond(respond, parse_mode='html', buttons=buttons)
 
-        db.set('msg-' + str(msg.id) + '-q', q)
+            db.set('msg-' + str(msg.id) + '-q', q)
+    except Exception as e:
+        print(str(e))
+        await event.reply(str(e))
 
 
 #################################################################################
@@ -265,12 +253,11 @@ async def bot_message_handler(event):
 #################################################################################
 
 
-@log_exception(logger)
 async def init_bot():
     # put some async initialization actions here
     for chat_id in chat_ids:
         entity = await client.get_entity(chat_id)
-        id_to_title[chat_id] = entity.title
+        id_to_title[chat_id] = format_entity_name(entity)
     logger.info('Bot started')
     await bot.send_message(admin_id, 'I am ready. ')
 
