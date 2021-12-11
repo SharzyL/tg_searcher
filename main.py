@@ -254,10 +254,11 @@ async def bot_message_handler(event):
 
 
 async def init_bot():
-    # put some async initialization actions here
+    await client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
     for chat_id in chat_ids:
-        entity = await client.get_entity(chat_id)
+        entity = await client.get_entity(await client.get_input_entity(chat_id))
         id_to_title[chat_id] = format_entity_name(entity)
+        logger.info(f'ready to monitor "{id_to_title[chat_id]}" ({chat_id})')
     logger.info('Bot started')
     await bot.send_message(admin_id, 'I am ready. ')
 
