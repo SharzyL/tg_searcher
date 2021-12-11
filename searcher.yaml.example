@@ -1,5 +1,5 @@
 redis:
-  host: localhost  # redis 运行的主机，默认为 localhost
+  host: localhost  # redis 运行的主机，默认为 localhost ；使用 docker-compose 时，应为 redis
   port: 6379  # redis 提供的端口，默认为 6379
 
 telegram:
@@ -30,4 +30,4 @@ private_whitelist:  # private mode 的白名单，在此名单中的用户总可
 
 random_mode: true  # 如果设置为 true，当用户发送 /random 指令时，会随机返回一条已索引消息的链接
 
-runtime_dir: /var/lib/tg_searcher  # 存储 Telegram session 和消息索引文件的目录
+runtime_dir: /var/lib/tg_searcher  # 存储 Telegram session 和消息索引文件的目录；使用 docker-compose 时，应为 /app/config/tg_searcher_data

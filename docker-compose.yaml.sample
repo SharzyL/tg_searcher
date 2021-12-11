@@ -1,0 +1,34 @@
+# Note: your config file `searcher.yaml` must be placed under `./config/` .
+# `redis host` must be set to `redis` .
+# `runtime_dir` must be set to `/app/config/tg_searcher_data` .
+# 注意：配置文件 `searcher.yaml` 必须放在 `./config/` 下面。
+# `redis host` 必须设置为 `redis` 。
+# `runtime_dir` 必须设置为 `/app/config/tg_searcher_data` 。
+
+version: '3'
+
+services:
+  tg_searcher:
+    image: rongronggg9/tg_searcher
+    container_name: tg_searcher
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      - redis
+    stdin_open: true  # once you've logged in, can be commented out 登入后可以注释掉
+    tty: true  # ditto 同上
+    command:
+      - -f
+      - ./config/searcher.yaml
+      #- "-c"  # clean indexes. once used, re-commented out and re-deploy 清除索引。使用后应立即恢复注释并重新部署
+  redis:
+    image: redis:alpine
+    container_name: tg_searcher_redis
+    restart: unless-stopped
+    command: >-
+      redis-server --appendonly yes --appendfilename "redis_db.aof" --appendfsync everysec 
+      --no-appendfsync-on-rewrite no --auto-aof-rewrite-percentage 100 --auto-aof-rewrite-min-size 64mb 
+      --aof-load-truncated yes
+    volumes:
+      - ./config/redis_data:/data

@@ -20,13 +20,16 @@
 
 4. 找出对于需要提供搜索服务的对话（可以是私聊、群组、频道）的 id。方法同上。
 
-5. 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
-
-6. 确保 python 版本在 3.7 或以上。
 
 ### 运行
 
-将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml`；安装相关的 python 库。
+#### 手动运行
+
+1. 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
+
+2. 确保 python 版本在 3.7 或以上。
+
+3. 将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml`；安装相关的 python 库。
 
 ```shell script
 git clone https://github.com/SharzyL/tg_searcher.git
@@ -39,6 +42,55 @@ pip install -r requirement.txt
 bot 不会自动下载历史消息，使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 可以让 bot 从头开始下载历史消息。之后发送 / 删除 / 修改消息时，bot 会自行更新数据库，无需干预。这个命令可以带有两个可选的参数，分别代表要下载的消息的最大 id 和最小 id。例如，发送 `/download_history 100 500` 可以下载所有 id 在 100 和 500 之间的消息（包括 100 和 500）。如果第二个参数没有指定，那么会下载所有 id 不小于第一个参数的消息。
 
 如果在配置文件中指定 `private_mode: true`，那么除了在 `private_whitelist` 中指定 id 的用户，其它用户无法看到搜索到的消息的内容。如果指定 `random_mode: true`，那么当用户分送 `/random` 指令时，会随机返回一条已索引消息。
+
+#### Docker Compose
+
+##### 初次配置
+
+```shell
+mkdir tg_searcher
+cd tg_searcher
+wget https://raw.githubusercontent.com/Rongronggg9/tg_searcher/master/docker-compose.yaml.sample -O docker-compose.yaml
+mkdir config
+wget https://raw.githubusercontent.com/Rongronggg9/tg_searcher/master/searcher.yaml.example -O config/searcher.yaml
+vi config/searcher.yaml  # 修改 searcher.yaml（见下）
+```
+
+需要保证 `searcher.yaml` 中: `redis host`=`redis`, `redis port`=`6379`, `runtime_dir`=`/app/config/tg_searcher_data` ，其余注意事项参考上一节及配置文件中的注释。  
+`tg_searcher` 目录将含有 bot 运行所需及产生的所有资讯，谨防泄露。需要迁移时，整个目录迁移即可。
+
+##### 初次运行
+
+```shell
+docker-compose up --no-start
+docker start tg_searcher_redis
+docker start -ia tg_searcher  # 这时你将需要按指引登入账号，一切完成后 Ctrl-P Ctrl-Q 解离
+```
+
+完成登入后，为了安全性着想，可以注释掉 `docker-compose.yaml` 里标明的两行（不是必须）。
+
+```shell
+docker-compose down  # 先停止运行
+vi docker-compose.yaml  # 注释掉标明的两行
+```
+
+##### 再次运行
+
+以后需要再次运行时，进入 `tg_searcher` 目录，执行以下命令即可。
+
+```shell
+docker-compose up -d
+```
+
+##### 升级
+
+以后需要升级时，进入 `tg_searcher` 目录，执行以下命令即可。
+
+```shell
+docker-compose down  # 先停止运行
+docker-compose pull  # 更新镜像
+docker-compose up -d
+```
 
 ## 如何找到对话的 id
 
