@@ -104,7 +104,7 @@ async def client_message_handler(event):
         indexer.index(
             content=strip_content(event.raw_text),
             url=url,
-            chat_id=event.chat_id,
+            chat_id=share_id,
             post_timestamp=event.date.timestamp(),
         )
 
@@ -244,8 +244,9 @@ async def bot_message_handler(event):
 
             db.set('msg-' + str(msg.id) + '-q', q)
     except Exception as e:
-        print(str(e))
-        await event.reply(str(e))
+        logger.error(f'Error occurs on processing bot request: {e}')
+        await event.reply(f'Error occurs on processing bot request: {e}')
+        raise e
 
 
 #################################################################################
