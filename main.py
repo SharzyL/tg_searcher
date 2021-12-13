@@ -48,14 +48,16 @@ page_len = config.get('search', {}).get('page_len', 10)
 welcome_message = config.get('welcome_message', 'Welcome')
 
 proxy_protocol = config.get('proxy', {}).get('protocol', None)
-assert proxy_protocol in ('socks5', 'socks4', 'http')
+assert proxy_protocol in ('socks5', 'socks4', 'http', None)
 proxy_host = config.get('proxy', {}).get('host', None)
 proxy_port = config.get('proxy', {}).get('port', None)
 
 runtime_dir = Path(config.get('runtime_dir', '.'))
 
 proxy = None
-if proxy_protocol and proxy_host and proxy_port:
+if not proxy_protocol and (proxy_host or proxy_port):
+    logging.warning('Proxy protocol unspecified, proxy will not be enabled')
+elif proxy_protocol and proxy_host and proxy_port:
     proxy = (proxy_protocol, proxy_host, proxy_port)
 
 
