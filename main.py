@@ -11,6 +11,8 @@ from datetime import datetime
 import redis
 import yaml
 from telethon import TelegramClient, events, Button
+from telethon.tl import types
+from telethon.tl.functions.bots import SetBotCommandsRequest
 
 from indexer import Indexer
 from log import get_logger
@@ -261,7 +263,31 @@ async def init_bot():
         id_to_title[chat_id] = format_entity_name(entity)
         logger.info(f'ready to monitor "{id_to_title[chat_id]}" ({chat_id})')
     logger.info('Bot started')
-    await bot.send_message(admin_id, 'I am ready. ')
+
+    admin_input_peer = None  # make IDE happy!
+    try:
+        admin_input_peer = await bot.get_input_entity(admin_id)
+    except ValueError as e:
+        logging.critical(f'Admin ID {admin_id} is invalid, or you have not had any conversation with the bot yet.'
+                         f'Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
+        exit(-1)
+
+    await bot.send_message(admin_input_peer, 'I am ready. ')
+
+    commands = [types.BotCommand(command="download_history", description='[ START[ END]] 下载历史消息')]
+    if random_mode:
+        commands.append(types.BotCommand(command="random", description='随机返回一条已索引消息'))
+
+    try:
+        await bot(
+            SetBotCommandsRequest(
+                scope=types.BotCommandScopePeer(admin_input_peer),
+                lang_code='',
+                commands=commands
+            )
+        )
+    except Exception as e:
+        logger.waring(f'Error occurs on setting bot commands: {e}')
 
 
 loop.run_until_complete(init_bot())
