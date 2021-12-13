@@ -62,6 +62,12 @@ if proxy_protocol and proxy_host and proxy_port:
 name = config.get('name', '')
 private_mode = config.get('private_mode', False)
 private_whitelist = config.get('private_whitelist', [])
+private_mode_strict = False
+private_whitelist_strict = None
+if isinstance(private_mode, str) and private_mode.lower() == 'strict':
+    private_mode = True
+    private_mode_strict = True
+    private_whitelist_strict = private_whitelist
 
 random_mode = config.get('random_mode', False)
 
@@ -191,7 +197,7 @@ async def download_history(min_id, max_id):
         await bot.send_message(admin_id, '下载完成')
 
 
-@bot.on(events.CallbackQuery())
+@bot.on(events.CallbackQuery(chats=private_whitelist_strict))
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
@@ -207,7 +213,7 @@ async def bot_callback_handler(event):
     await event.answer()
 
 
-@bot.on(events.NewMessage())
+@bot.on(events.NewMessage(chats=private_whitelist_strict))
 async def bot_message_handler(event):
     try:
         text = event.raw_text
