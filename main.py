@@ -120,9 +120,9 @@ async def client_message_update_handler(event):
 
 @client.on(events.MessageDeleted())
 async def client_message_delete_handler(event):
-    if event.chat_id and event.chat_id in chat_ids:
+    share_id = get_share_id(event.chat_id)
+    if event.chat_id and share_id in chat_ids:
         for msg_id in event.deleted_ids:
-            share_id = get_share_id(event.chat_id)
             url = f'https://t.me/c/{share_id}/{msg_id}'
             logger.info(f'Delete message {url}')
             indexer.delete(url=url)
