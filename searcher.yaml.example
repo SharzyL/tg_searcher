@@ -22,7 +22,7 @@ search:
 
 welcome_message: 这里是 @sharzy_talk 的搜索 Bot，直接发送你要搜索的内容即可  # 用户启动 bot 时的欢迎信息
 
-private_mode: false  # 如果设置为 true，那么人们将无法看到消息的预览
+private_mode: false  # 如果设置为 true，那么人们将无法看到消息的预览；如果设置为 strict，那么只有白名单内的用户才能操作 bot (请把自己加进白名单内)
 
 private_whitelist:  # private mode 的白名单，在此名单中的用户总可以看到消息的预览
   - 134312541

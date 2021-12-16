@@ -11,6 +11,8 @@ from datetime import datetime
 import redis
 import yaml
 from telethon import TelegramClient, events, Button
+from telethon.tl import types
+from telethon.tl.functions.bots import SetBotCommandsRequest
 
 from indexer import Indexer
 from log import get_logger
@@ -46,20 +48,28 @@ page_len = config.get('search', {}).get('page_len', 10)
 welcome_message = config.get('welcome_message', 'Welcome')
 
 proxy_protocol = config.get('proxy', {}).get('protocol', None)
-assert proxy_protocol in ('socks5', 'socks4', 'http')
+assert proxy_protocol in ('socks5', 'socks4', 'http', None)
 proxy_host = config.get('proxy', {}).get('host', None)
 proxy_port = config.get('proxy', {}).get('port', None)
 
 runtime_dir = Path(config.get('runtime_dir', '.'))
 
 proxy = None
-if proxy_protocol and proxy_host and proxy_port:
+if not proxy_protocol and (proxy_host or proxy_port):
+    logging.warning('Proxy protocol unspecified, proxy will not be enabled')
+elif proxy_protocol and proxy_host and proxy_port:
     proxy = (proxy_protocol, proxy_host, proxy_port)
 
 
 name = config.get('name', '')
 private_mode = config.get('private_mode', False)
 private_whitelist = config.get('private_whitelist', [])
+private_mode_strict = False
+private_whitelist_strict = None
+if isinstance(private_mode, str) and private_mode.lower() == 'strict':
+    private_mode = True
+    private_mode_strict = True
+    private_whitelist_strict = private_whitelist
 
 random_mode = config.get('random_mode', False)
 
@@ -189,7 +199,7 @@ async def download_history(min_id, max_id):
         await bot.send_message(admin_id, '下载完成')
 
 
-@bot.on(events.CallbackQuery())
+@bot.on(events.CallbackQuery(chats=private_whitelist_strict))
 async def bot_callback_handler(event):
     if event.data and event.data != b'-1':
         page_num = int(event.data)
@@ -205,7 +215,7 @@ async def bot_callback_handler(event):
     await event.answer()
 
 
-@bot.on(events.NewMessage())
+@bot.on(events.NewMessage(chats=private_whitelist_strict))
 async def bot_message_handler(event):
     try:
         text = event.raw_text
@@ -261,7 +271,31 @@ async def init_bot():
         id_to_title[chat_id] = format_entity_name(entity)
         logger.info(f'ready to monitor "{id_to_title[chat_id]}" ({chat_id})')
     logger.info('Bot started')
-    await bot.send_message(admin_id, 'I am ready. ')
+
+    admin_input_peer = None  # make IDE happy!
+    try:
+        admin_input_peer = await bot.get_input_entity(admin_id)
+    except ValueError as e:
+        logging.critical(f'Admin ID {admin_id} is invalid, or you have not had any conversation with the bot yet.'
+                         f'Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
+        exit(-1)
+
+    await bot.send_message(admin_input_peer, 'I am ready. ')
+
+    commands = [types.BotCommand(command="download_history", description='[ START[ END]] 下载历史消息')]
+    if random_mode:
+        commands.append(types.BotCommand(command="random", description='随机返回一条已索引消息'))
+
+    try:
+        await bot(
+            SetBotCommandsRequest(
+                scope=types.BotCommandScopePeer(admin_input_peer),
+                lang_code='',
+                commands=commands
+            )
+        )
+    except Exception as e:
+        logger.waring(f'Error occurs on setting bot commands: {e}')
 
 
 loop.run_until_complete(init_bot())
