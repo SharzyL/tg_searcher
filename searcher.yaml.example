@@ -10,7 +10,7 @@ telegram:
 
 proxy:
   protocol: http  # http or socks5, socks4
-  host: localhost  # or something like 127.0.0.1
+  host: localhost  # or something like 127.0.0.1. docker on Linux: 172.17.0.1, on Mac/Windows: host.docker.internal
   port: 1080
 
 chat_id:

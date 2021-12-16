@@ -59,6 +59,23 @@ vi config/searcher.yaml  # 修改 searcher.yaml（见下）
 需要保证 `searcher.yaml` 中: `redis host`=`redis`, `redis port`=`6379`, `runtime_dir`=`/app/config/tg_searcher_data` ，其余注意事项参考上一节及配置文件中的注释。  
 `tg_searcher` 目录将含有 bot 运行所需及产生的所有资讯，谨防泄露。需要迁移时，整个目录迁移即可。
 
+###### 代理设置
+
+如果需要使用宿主机上的代理，需要正确配置 `proxy host` :
+
+**Linux**: 使用默认的网络配置的情况下会是 `docker0` 虚拟网卡的 IP，一般是 `172.17.0.1`
+
+```shell
+$ ip address
+
+*: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default
+    link/ether **:**:**:**:**:** brd ff:ff:ff:ff:ff:ff
+    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
+       valid_lft forever preferred_lft forever
+```
+
+**Mac / Windows**: `host.docker.internal`
+
 ##### 初次运行
 
 ```shell
