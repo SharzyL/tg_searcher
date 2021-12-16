@@ -9,7 +9,7 @@ version: '3'
 
 services:
   tg_searcher:
-    image: rongronggg9/tg_searcher
+    image: sharzy/tg_searcher
     container_name: tg_searcher
     restart: unless-stopped
     volumes:
