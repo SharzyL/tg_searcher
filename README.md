@@ -50,9 +50,9 @@ bot 不会自动下载历史消息，使用管理员帐号向上面填写的账�
 ```shell
 mkdir tg_searcher
 cd tg_searcher
-wget https://raw.githubusercontent.com/Rongronggg9/tg_searcher/master/docker-compose.yaml.sample -O docker-compose.yaml
+wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/docker-compose.yaml.sample -O docker-compose.yaml
 mkdir config
-wget https://raw.githubusercontent.com/Rongronggg9/tg_searcher/master/searcher.yaml.example -O config/searcher.yaml
+wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/searcher.yaml.example -O config/searcher.yaml
 vi config/searcher.yaml  # 修改 searcher.yaml（见下）
 ```
 
@@ -75,6 +75,8 @@ $ ip address
 ```
 
 **Mac / Windows**: `host.docker.internal`
+
+除了在 tg_searcher 的配置文件中进行配置以外，注意宿主机的代理也需要设置监听这一 IP 地址，具体设置方法视代理客户端而定。
 
 ##### 初次运行
 
