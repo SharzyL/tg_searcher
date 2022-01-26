@@ -1,3 +1,5 @@
+import logging
+
 import yaml
 from argparse import ArgumentParser
 from pathlib import Path
@@ -14,7 +16,12 @@ async def main():
                         help='Build a new index from the scratch')
     parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
                         help='Specify where the configuration yaml file lies')
+    parser.add_argument('--debug', action='store_true', help='set loglevel to DEBUG')
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
 
     full_config = yaml.safe_load(Path(args.config).read_text())
     
@@ -23,15 +30,15 @@ async def main():
     common_config = CommonBotConfig(**full_config['common'])
     
     backend = BackendBot(common_config, backend_config, args.clear)
-    frontend = SingleUserFrontend(common_config, frontend_config, backend)
     await backend.start()
+    frontend = SingleUserFrontend(common_config, frontend_config, backend)
     await frontend.start()
 
     try:
-        asyncio.get_event_loop().run_forever()
+        await frontend.bot.run_until_disconnected()
     except KeyboardInterrupt:
-        pass
+        logging.critical("Interrupted by user")
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
