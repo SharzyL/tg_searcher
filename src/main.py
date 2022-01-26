@@ -8,7 +8,7 @@ from backend_bot import BackendBot, BackendBotConfig
 from common import CommonBotConfig
 
 
-def main():
+async def main():
     parser = ArgumentParser(description='A server to provide Telegram message searching')
     parser.add_argument('-c', '--clear', action='store_const', const=True, default=False,
                         help='Build a new index from the scratch')
@@ -24,6 +24,8 @@ def main():
     
     backend = BackendBot(common_config, backend_config, args.clear)
     frontend = SingleUserFrontend(common_config, frontend_config, backend)
+    await backend.start()
+    await frontend.start()
 
     try:
         asyncio.get_event_loop().run_forever()

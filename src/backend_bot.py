@@ -31,9 +31,11 @@ class BackendBot:
         self._indexed_chats = cfg.indexed_chats
         self._logger = get_logger('indexer_bot')
         self._id_to_title_table: dict[int, str] = dict()
+        self._cfg = cfg
 
+    async def start(self):
         await self._client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
-        for chat_id in cfg.indexed_chats:
+        for chat_id in self._cfg.indexed_chats:
             entity = await self._client.get_entity(await self._client.get_input_entity(chat_id))
             self._id_to_title_table[chat_id] = format_entity_name(entity)
             self._logger.info(f'ready to monitor "{self._id_to_title_table[chat_id]}" ({chat_id})')
