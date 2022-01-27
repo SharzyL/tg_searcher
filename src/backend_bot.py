@@ -26,8 +26,8 @@ class BackendBot:
         )
         self.indexed_chats = cfg.indexed_chats
 
-        self._indexer: Indexer = Indexer(common_cfg.index_dir, common_cfg.name, clean_db)
-        self._logger = get_logger('bot-backend')
+        self._indexer: Indexer = Indexer(common_cfg.index_dir, backend_id, clean_db)
+        self._logger = get_logger(f'bot-backend:{backend_id}')
         self._id_to_title_table: dict[int, str] = dict()
         self._cfg = cfg
 
@@ -83,24 +83,31 @@ class BackendBot:
             self.indexed_chats.append(chat_id)
         writer.commit()
 
-    def clear(self):
-        # TODO: support cleaning only one chat
-        self._indexer.clear()
+    def clear(self, chat_ids: Optional[list[int]] = None):
+        if chat_ids is not None:
+            for chat_id in chat_ids:
+                with self._indexer.ix.writer() as w:
+                    w.delete_by_term('chat_id', chat_id)
+        else:
+            self._indexer.clear()
 
-    def get_stat(self):
+    async def get_stat(self):
         sb = [
-            f'The status of backend:\n\n'
-            f'Count of messages: <b>{self._indexer.ix.doc_count()}</b>\n\n'
-            f'{len(self.indexed_chats)} chats are being monitored\n'
+            f'The status of backend "{self.id}"\n\n'
+            f'Total messages: <b>{self._indexer.ix.doc_count()}</b>\n\n'
+            f'{len(self.indexed_chats)} chats are being indexed: \n'
         ]  # string builder
+        # TODO: print 'hidden' chats
         for chat_id, name in self._id_to_title_table.items():
-            sb.append(f'- <b>{html.escape(name)}</b> ({chat_id}):\n')
+            num = self._indexer.count(chat_id=chat_id)
+            # TODO: handle PM URL
+            sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> {num} messages\n')
         return ''.join(sb)
 
     def is_empty(self, chat_id=None):
         if chat_id is not None:
             with self._indexer.ix.searcher() as searcher:
-                return not any(True for _ in searcher.documents(chat_id=chat_id))
+                return not any(True for _ in searcher.document_numbers(chat_id=chat_id))
         else:
             return self._indexer.ix.is_empty()
 

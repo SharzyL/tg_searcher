@@ -55,7 +55,7 @@ class BotFrontend:
         )
         self._cfg = cfg
         self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
-        self._logger = get_logger('bot-frontend')
+        self._logger = get_logger(f'bot-frontend:{frontend_id}')
 
         self.download_arg_parser = ArgumentParser()
         self.download_arg_parser.add_argument('--min', type=int)
@@ -68,6 +68,7 @@ class BotFrontend:
         await self._register_commands()
         self._register_hooks()
         await self.bot.send_message(self._cfg.admin_id, 'I am ready')
+        await self.bot.send_message(self._cfg.admin_id, await self.backend.get_stat(), parse_mode='html')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
@@ -115,7 +116,7 @@ class BotFrontend:
             for chat_id in self.backend.indexed_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
-            await event.respond('Choose a chat to work with', buttons=buttons)
+            await event.respond('Choose a chat', buttons=buttons)
 
         elif text.startswith('/'):
             await event.respond(f'错误：未知命令 {text.split()[0]}')
@@ -127,7 +128,7 @@ class BotFrontend:
         text: str = event.raw_text
         self._logger.info(f'Admin {event.chat_id} Queries "{text}"')
         if text.startswith('/stat'):
-            await event.respond(self.backend.get_stat(), parse_mode='html')
+            await event.respond(await self.backend.get_stat(), parse_mode='html')
 
         elif text.startswith('/download_history'):
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
@@ -138,16 +139,23 @@ class BotFrontend:
                 await self._download_history(chat_id, min_id, max_id)
 
         elif text.startswith('/clear'):
-            self.backend.clear()
-            await event.reply("索引已清除")
+            chat_ids = self.get_selected_chat(event)
+            self.backend.clear(chat_ids)
+            if chat_ids:
+                for chat_id in chat_ids:
+                    chat_name = await self.backend.translate_chat_id(chat_id)
+                    await event.reply(f'{chat_name} ({chat_id}) 的索引已清除')
+            else:
+                await event.reply('全部索引已清除')
 
         elif text.startswith('/find_chat_id'):
             q = text[14:].strip()
             sb = []
+            msg = await event.reply("Processing...")
             for chat_id in await self.backend.search_chat_id(q):
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
-            await event.reply(''.join(sb), parse_mode='html')
+            await self.bot.edit_message(msg, ''.join(sb), parse_mode='html')
 
         else:
             await self._normal_msg_handler(event)
@@ -206,9 +214,9 @@ class BotFrontend:
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
         if prog_msg is None:
-            await self.bot.send_message(admin_id, f'{chat_name} ({chat_id}) 下载完成')
+            await self.bot.send_message(admin_id, f'{chat_name} ({chat_id}) 下载完成，共计 {cnt} 条消息')
         else:
-            await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成')
+            await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成，共计 {cnt} 条消息')
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())

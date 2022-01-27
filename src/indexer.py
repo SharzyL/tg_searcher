@@ -37,11 +37,17 @@ class IndexMsg:
             'post_time': self.post_time,
         }
 
+    def __str__(self):
+        return f'IndexMsg' + ', '.join(f'{k}={repr(v)}' for k, v in self.as_dict().items())
+
 
 class SearchHit:
     def __init__(self, msg: IndexMsg, highlighted: str):
         self.msg = msg
         self.highlighted = highlighted
+
+    def __str__(self):
+        return f'SearchHit(highlighted={repr(self.highlighted)}, msg={self.msg})'
 
 
 class SearchResult:
@@ -97,6 +103,10 @@ class Indexer:
             hits = [SearchHit(IndexMsg(**msg), self.highlighter.highlight_hit(msg, 'content'))
                     for msg in result_page]
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
+
+    def count(self, **kw):
+        with self.ix.searcher() as s:
+            return len(list(s.document_numbers(**kw)))
 
     def delete(self, url: str):
         with self.ix.writer() as writer:
