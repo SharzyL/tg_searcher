@@ -1,6 +1,6 @@
 # 部署
 
-我们提供了两种部署的方法：一种是安装依赖，部署 redis 服务器，并且运行 python 程序。另一种是使用 docker-compose。
+我们提供了两种部署的方法：一种手动安装。另一种是使用 docker-compose。
 
 ## 手动运行
 
@@ -8,15 +8,21 @@
 
 2. 确保 python 版本在 3.7 或以上。
 
-3. 将仓库代码克隆到服务器上，安装依赖：
-
 ```shell script
-git clone https://github.com/SharzyL/tg_searcher.git
-cd tg_searcher
-pip install -r requirement.txt
+# install from pip
+python3 -m pip install -U tg-searcher
+
+# or install from github
+# python3 -m pip install -U git+https://github.com/SharzyL/tg_searcher
+
+# or install locally
+# git clone https://github.com/SharzyL/tg_seacher && cd tg_searcher
+# python3 -m pip install -e .
 ```
 
-参考 README 填写配置文件，运行 `python main.py -f /path/to/config.yaml`，首次运行时需要填写验证码（如果设置了两步验证，还需填写密码）。运行成功后 bot 会在 Telegram 中向管理员发送一条包含服务器状态的消息。
+参考 README 填写配置文件，运行 `python3 -m tg_searcher -f /path/to/config.yaml` 即可。如果 pip 安装可执行文件的目录在 `PATH` 里面，也可以直接 `tg-searcher -f /path/to/config.yaml`。
+
+首次运行时需要填写验证码（如果设置了两步验证，还需填写密码）。运行成功后 bot 会在 Telegram 中向管理员发送一条包含服务器状态的消息。
 
 ## Docker Compose
 

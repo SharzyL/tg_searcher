@@ -1,10 +1,7 @@
-*.log
-*.swp
 .idea
-test.py
 __pycache__
-*_session
-*.yaml
 venv
-index
-config
+*.tmp.*
+dist
+*.egg-info
+

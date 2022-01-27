@@ -1,13 +1,11 @@
 import html
 from datetime import datetime
-
-from common import CommonBotConfig
 from typing import Optional, Union, Iterable, List, Set, Dict
 
 from telethon import TelegramClient, events
 
-from indexer import Indexer, IndexMsg
-from common import strip_content, get_share_id, get_logger, format_entity_name
+from .indexer import Indexer, IndexMsg
+from .common import CommonBotConfig, strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
     def __init__(self, indexed_chats: Iterable[int]):

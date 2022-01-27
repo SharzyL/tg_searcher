@@ -10,5 +10,5 @@ RUN pip install --no-cache-dir --trusted-host pypi.python.org -r /app/requiremen
 
 COPY . /app
 
-ENTRYPOINT ["python", "-u", "src/main.py"]
+ENTRYPOINT ["python", "-m", "tg_searcher"]
 CMD ["-f", "./config/searcher.yaml"]

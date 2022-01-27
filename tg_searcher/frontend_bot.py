@@ -11,9 +11,9 @@ from telethon.tl.types import Message as TgMessage, \
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 
-from common import CommonBotConfig, get_logger
-from backend_bot import BackendBot
-from indexer import SearchResult
+from .common import CommonBotConfig, get_logger
+from .backend_bot import BackendBot
+from .indexer import SearchResult
 
 
 class BotFrontendConfig:

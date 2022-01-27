@@ -7,12 +7,12 @@ import asyncio
 
 from telethon.client import TelegramClient
 
-from frontend_bot import BotFrontend, BotFrontendConfig
-from backend_bot import BackendBot, BackendBotConfig
-from common import CommonBotConfig
+from .frontend_bot import BotFrontend, BotFrontendConfig
+from .backend_bot import BackendBot, BackendBotConfig
+from .common import CommonBotConfig
 
 
-async def main():
+async def a_main():
     parser = ArgumentParser(description='A server to provide Telegram message searching')
     parser.add_argument('-c', '--clear', action='store_const', const=True, default=False,
                         help='Clear existing index')
@@ -75,7 +75,8 @@ async def main():
     for frontend in frontends.values():
         await frontend.bot.run_until_disconnected()
 
+def main():
+    asyncio.run(a_main())
 
-if __name__ == '__main__':
-    asyncio.run(main())
 
+main()
