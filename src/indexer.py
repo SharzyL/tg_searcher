@@ -6,7 +6,7 @@ import random
 from typing import Optional
 
 from whoosh.index import create_in, exists_in, open_dir
-from whoosh.fields import Schema, TEXT, ID, STORED, DATETIME
+from whoosh.fields import Schema, TEXT, ID, NUMERIC, DATETIME
 from whoosh.qparser import QueryParser
 from whoosh.writing import IndexWriter
 from whoosh.query import Term, And, Or
@@ -14,12 +14,12 @@ import whoosh.highlight as highlight
 from jieba.analyse.analyzer import ChineseAnalyzer
 
 
-class Message:
+class IndexMsg:
     # TODO: add sender to Message schema
     schema = Schema(
         content=TEXT(stored=True, analyzer=ChineseAnalyzer()),
         url=ID(stored=True, unique=True),
-        chat_id=STORED(),
+        chat_id=NUMERIC(stored=True),
         post_time=DATETIME(stored=True, sortable=True),
     )
 
@@ -39,7 +39,7 @@ class Message:
 
 
 class SearchHit:
-    def __init__(self, msg: Message, highlighted: str):
+    def __init__(self, msg: IndexMsg, highlighted: str):
         self.msg = msg
         self.highlighted = highlighted
 
@@ -62,25 +62,25 @@ class Indexer:
             import shutil
             shutil.rmtree(index_dir)
             index_dir.mkdir()
-            self.ix = create_in(index_dir, Message.schema, index_name)
+            self.ix = create_in(index_dir, IndexMsg.schema, index_name)
 
         if from_scratch:
             _clear()
 
         self.ix = open_dir(index_dir, index_name) \
             if exists_in(index_dir, index_name) \
-            else create_in(index_dir, Message.schema, index_name)
+            else create_in(index_dir, IndexMsg.schema, index_name)
 
         self._clear = _clear  # use closure to avoid introducing too much members
-        self.query_parser = QueryParser('content', Message.schema)
+        self.query_parser = QueryParser('content', IndexMsg.schema)
         self.highlighter = highlight.Highlighter()
 
-    def retrieve_random_document(self) -> Message:
+    def retrieve_random_document(self) -> IndexMsg:
         with self.ix.searcher() as searcher:
             msg_dict = random.choice(list(searcher.documents()))
-            return Message(**msg_dict)
+            return IndexMsg(**msg_dict)
 
-    def add_document(self, message: Message, writer: Optional[IndexWriter] = None):
+    def add_document(self, message: IndexMsg, writer: Optional[IndexWriter] = None):
         if writer is not None:
             writer.add_document(**message.as_dict())
         else:
@@ -95,7 +95,7 @@ class Indexer:
             result_page = searcher.search_page(q, page_num, page_len,
                                                sortedby='post_time', reverse=True)
 
-            hits = [SearchHit(Message(**msg), self.highlighter.highlight_hit(msg, 'content'))
+            hits = [SearchHit(IndexMsg(**msg), self.highlighter.highlight_hit(msg, 'content'))
                     for msg in result_page]
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
 

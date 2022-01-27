@@ -6,7 +6,7 @@ from typing import Optional
 
 from telethon import TelegramClient, events
 
-from indexer import Indexer, Message, SearchResult
+from indexer import Indexer, IndexMsg, SearchResult
 from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
@@ -24,9 +24,10 @@ class BackendBot:
             api_hash=common_cfg.api_hash,
             proxy=common_cfg.proxy,
         )
+        self.indexed_chats = cfg.indexed_chats
+
         self._indexer: Indexer = Indexer(common_cfg.index_dir, common_cfg.name, clean_db)
-        self._indexed_chats = cfg.indexed_chats
-        self._logger = get_logger('indexer_bot')
+        self._logger = get_logger('bot-backend')
         self._id_to_title_table: dict[int, str] = dict()
         self._cfg = cfg
 
@@ -39,68 +40,75 @@ class BackendBot:
 
         await self.client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
         for chat_id in self._cfg.indexed_chats:
-            entity = await self.client.get_entity(await self.client.get_input_entity(chat_id))
-            self._id_to_title_table[chat_id] = format_entity_name(entity)
-            self._logger.info(f'ready to monitor "{self._id_to_title_table[chat_id]}" ({chat_id})')
+            chat_name = await self.translate_chat_id(chat_id)
+            self._logger.info(f'ready to monitor "{chat_name}" ({chat_id})')
 
         self._register_hooks()
 
-    def translate_chat_id(self, chat_id: int):
+    async def translate_chat_id(self, chat_id: int):
+        if chat_id not in self._id_to_title_table:
+            entity = await self.client.get_entity(await self.client.get_input_entity(chat_id))
+            self._id_to_title_table[chat_id] = format_entity_name(entity)
         return self._id_to_title_table[chat_id]
 
     def search(self, q: str, in_chats: Optional[list[int]], page_len: int, page_num: int):
         return self._indexer.search(q, in_chats, page_len, page_num)
 
-    def rand_msg(self) -> Message:
+    def rand_msg(self) -> IndexMsg:
         return self._indexer.retrieve_random_document()
 
-    def start_track_chat(self, chat_id: int) -> int:  # return chat_id
-        # TODO
+    def add_index(self, chat_id: int) -> int:  # return chat_id
+        # TODO: add chat_id to indexed_chats, re-register event handler
         ...
 
-    async def download_history(self, min_id: int, max_id: int, call_back=None):
+    async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
         writer = self._indexer.ix.writer()
-        for chat_id in self._cfg.indexed_chats:
-            self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
-            async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
-                # FIXME: it seems that iterating over PM return nothing?
-                if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
-                    share_id = get_share_id(chat_id)
-                    url = f'https://t.me/c/{share_id}/{tg_message.id}'
-                    msg = Message(
-                        content=strip_content(tg_message.raw_text),
-                        url=url,
-                        chat_id=chat_id,
-                        post_time=datetime.fromtimestamp(tg_message.date.timestamp())
-                    )
-                    self._indexer.add_document(msg, writer)
-                    await call_back(chat_id, tg_message.id)
-            await call_back(chat_id, -1)  # indicating the end
+        self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
+        async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
+            # FIXME: it seems that iterating over PM return nothing?
+            if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
+                share_id = get_share_id(chat_id)
+                url = f'https://t.me/c/{share_id}/{tg_message.id}'
+                msg = IndexMsg(
+                    content=strip_content(tg_message.raw_text),
+                    url=url,
+                    chat_id=chat_id,
+                    post_time=datetime.fromtimestamp(tg_message.date.timestamp())
+                )
+                self._indexer.add_document(msg, writer)
+                await call_back(tg_message.id)
+        if chat_id not in self.indexed_chats:
+            self.indexed_chats.append(chat_id)
         writer.commit()
 
     def clear(self):
         self._indexer.clear()
 
     def get_stat(self):
-        sb = []  # string builder
-        sb.append(f'The status of backend:\n\n')
-        sb.append(f'Count of messages: <b>{self._indexer.ix.doc_count()}</b>\n\n')
-        sb.append(f'{len(self._indexed_chats)} chats are being monitored\n')
+        sb = [
+            f'The status of backend:\n\n'
+            f'Count of messages: <b>{self._indexer.ix.doc_count()}</b>\n\n'
+            f'{len(self.indexed_chats)} chats are being monitored\n'
+        ]  # string builder
         for chat_id, name in self._id_to_title_table.items():
-            sb.append(f'  - <b>{html.escape(name)}</b> ({chat_id}):\n')
+            sb.append(f'- <b>{html.escape(name)}</b> ({chat_id}):\n')
         return ''.join(sb)
 
-    def is_empty(self):
-        return self._indexer.ix.is_empty()
+    def is_empty(self, chat_id=None):
+        if chat_id is not None:
+            with self._indexer.ix.searcher() as searcher:
+                return not any(True for _ in searcher.documents(chat_id=chat_id))
+        else:
+            return self._indexer.ix.is_empty()
 
     def _register_hooks(self):
-        @self.client.on(events.NewMessage(chats=self._indexed_chats))
-        async def client_message_handler(event):
-            if event.raw_text and len(event.raw_text.strip()) >= 0:
+        @self.client.on(events.NewMessage())
+        async def client_message_handler(event: events.NewMessage.Event):
+            if event.chat_id in self.indexed_chats and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
                 url = f'https://t.me/c/{share_id}/{event.id}'
                 self._logger.info(f'New message {url}')
-                msg = Message(
+                msg = IndexMsg(
                     content=strip_content(event.raw_text),
                     url=url,
                     chat_id=share_id,
@@ -108,7 +116,7 @@ class BackendBot:
                 )
                 self._indexer.add_document(msg)
 
-        @self.client.on(events.MessageEdited(chats=self._indexed_chats))
+        @self.client.on(events.MessageEdited(chats=self.indexed_chats))
         async def client_message_update_handler(event):
             if event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
@@ -119,7 +127,7 @@ class BackendBot:
         @self.client.on(events.MessageDeleted())
         async def client_message_delete_handler(event):
             share_id = get_share_id(event.chat_id)
-            if event.chat_id and share_id in self._indexed_chats:
+            if event.chat_id and share_id in self.indexed_chats:
                 for msg_id in event.deleted_ids:
                     url = f'https://t.me/c/{share_id}/{msg_id}'
                     self._logger.info(f'Delete message {url}')

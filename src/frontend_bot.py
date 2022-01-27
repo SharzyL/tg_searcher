@@ -2,15 +2,19 @@ import html
 from time import time
 from typing import Optional
 from traceback import format_exc
+from argparse import ArgumentParser
+import shlex
 
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import Message as TgMessage, BotCommand, BotCommandScopePeer, BotCommandScopeDefault
+from telethon.tl.types import Message as TgMessage, \
+    BotCommand, BotCommandScopePeer, BotCommandScopeDefault
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 
 from common import CommonBotConfig, get_logger
 from backend_bot import BackendBot
 from indexer import SearchResult
+
 
 class BotFrontendConfig:
     @staticmethod
@@ -42,6 +46,11 @@ class BotFrontend:
         self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
         self._logger = get_logger('bot-frontend')
 
+        self.download_arg_parser = ArgumentParser()
+        self.download_arg_parser.add_argument('--min', type=int)
+        self.download_arg_parser.add_argument('--max', type=int)
+        self.download_arg_parser.add_argument('chats', type=int, nargs='*')
+
     async def start(self):
         self._logger.info(f'init frontend bot {self.id}')
         await self.bot.start(bot_token=self._cfg.bot_token)
@@ -49,136 +58,145 @@ class BotFrontend:
         self._register_hooks()
         await self.bot.send_message(self._cfg.admin_id, 'I am ready')
 
-    async def _callback_handler(self, event):
+    async def _callback_handler(self, event: events.CallbackQuery.Event):
         if event.data and event.data != b'-1':
             page_num = int(event.data)
             q = self._redis.get('msg-' + str(event.message_id) + '-q')
             self._logger.info(f'Query [{q}] turned to page {page_num}')
             if q:
                 start_time = time()
-                result = self.backend.search(q, self._cfg.page_len, page_num)
+                result = self.backend.search(q, None, self._cfg.page_len, page_num)
                 used_time = time() - start_time
-                respond = self._render_respond_text(result, used_time)
+                respond = await self._render_respond_text(result, used_time)
                 buttons = self._render_respond_buttons(result, page_num)
                 await event.edit(respond, parse_mode='html', buttons=buttons)
         await event.answer()
 
-    async def _normal_msg_handler(self, event):
-        text = event.raw_text
-        self._logger.info(f'User {event.chat_id} Queries [{text}]')
+    async def _normal_msg_handler(self, event: events.NewMessage.Event):
+        text: str = event.message.message
+        self._logger.info(f'User {event.chat_id} Queries "{text}"')
 
-        if not (event.raw_text and event.raw_text.strip()) or event.raw_text.startswith('/start'):
+        if not (text and text.strip()) or text.startswith('/start'):
             return
 
-        elif event.raw_text.startswith('/random'):
+        elif text.startswith('/random'):
             msg = self.backend.rand_msg()
             respond = f'Random message from <b>{msg.chat_id} [{msg.post_time}]</b>\n'
             respond += f'{msg.url}\n'
             await event.respond(respond, parse_mode='html')
 
+        elif text.startswith('/'):
+            await event.respond(f'错误：未知命令 {text.split()[0]}')
+
         else:
             await self._search(event)
 
-    async def _admin_msg_handler(self, event):
-        text = event.raw_text
-        self._logger.info(f'Admin {event.chat_id} Queries [{text}]')
-        if event.raw_text.startswith('/stat') and event.chat_id == self._cfg.admin_id:
+    async def _admin_msg_handler(self, event: events.NewMessage.Event):
+        text: str = event.raw_text
+        self._logger.info(f'Admin {event.chat_id} Queries "{text}"')
+        if text.startswith('/stat'):
             await event.respond(self.backend.get_stat(), parse_mode='html')
 
-        elif event.raw_text.startswith('/download_history') and event.chat_id == self._cfg.admin_id:
-            await self._download_history(event)
+        elif text.startswith('/download_history'):
+            download_args = text.split()
 
-        elif event.raw_text.startswith('/clear') and event.chat_id == self._cfg.admin_id:
+            args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
+            min_id = args.min or 1
+            max_id = args.max or 1 << 31 - 1
+            chat_ids = args.chats or self.backend.indexed_chats
+            for chat_id in chat_ids:
+                await self._download_history(chat_id, min_id, max_id)
+
+        elif text.startswith('/clear'):
             self.backend.clear()
             await event.reply("索引已清除")
+
+        elif text.startswith('/chats'):
+            pass
 
         else:
             await self._normal_msg_handler(event)
 
-    async def _search(self, event):
+    async def _search(self, event: events.NewMessage.Event):
         if self.backend.is_empty():
-            await event.respond('当前索引为空，请先 /download_history 建立索引')
+            await self.bot.send_message(self._cfg.admin_id, '当前索引为空，请先 /download_history 建立索引')
             return
         start_time = time()
         q = event.raw_text
         result = self.backend.search(q, in_chats=None, page_len=self._cfg.page_len, page_num=1)
         used_time = time() - start_time
-        respond = self._render_respond_text(result, used_time)
+        respond = await self._render_respond_text(result, used_time)
         buttons = self._render_respond_buttons(result, 1)
         msg = await event.respond(respond, parse_mode='html', buttons=buttons)
 
         self._redis.set('msg-' + str(msg.id) + '-q', q)
 
-    async def _download_history(self, event):
-        admin_id = event.chat_id
-        download_args = event.raw_text.split()
-        if len(download_args) == 1 and not self.backend.is_empty():
-            await self.bot.send_message(admin_id, '当前的索引非空，下载历史会导致索引重复消息，请先 /clear 清除索引')
+    async def _download_history(self, chat_id: int, min_id: int, max_id: int):
+        admin_id = self._cfg.admin_id
+        chat_name = await self.backend.translate_chat_id(chat_id)
+
+        if chat_id not in self.backend.indexed_chats:
+            await self.bot.send_message(
+                admin_id,
+                f'警告：重启后端 bot 之后，{chat_name} ({chat_id}) 的索引可能失效，'
+                f'请将 {chat_id} 加入配置文件'
+            )
+        if min_id == 1 and max_id == 1 << 31 - 1 and not self.backend.is_empty(chat_id):
+            await self.bot.send_message(
+                admin_id,
+                f'错误：{chat_name} ({chat_id}) 的索引非空，下载历史会导致索引重复消息，'
+                f'请先 /clear 清除索引，或者指定索引范围'
+            )
             return
-
-        min_id = max(int(download_args[1]), 1) if len(download_args) > 1 else 1
-        max_id = int(download_args[2]) if len(download_args) > 2 else 1 << 31 - 1
-        # TODO: is auto clear necessary?
-
-        await event.respond('开始下载历史记录')
-
         last_prog_remaining: Optional[int] = None
-        cur_chat_id: Optional[int] = None
         prog_msg: Optional[TgMessage] = None
 
-        async def call_back(chat_id, msg_id):
-            nonlocal prog_msg, last_prog_remaining, cur_chat_id
-            chat_name = self.backend.translate_chat_id(chat_id)
+        async def call_back(msg_id):
+            nonlocal prog_msg, last_prog_remaining
             remaining_msg_cnt = msg_id - min_id
 
-            if msg_id < 0:
-                if prog_msg is None:
-                    await self.bot.send_message(f'{chat_name} ({chat_id}) 下载完成')
-                else:
-                    await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成')
-
-            elif chat_id != cur_chat_id or remaining_msg_cnt < last_prog_remaining - 100:
+            if last_prog_remaining is None or remaining_msg_cnt < last_prog_remaining - 100:
                 prog_text = f'"{chat_name}" ({chat_id}): 还需下载 {remaining_msg_cnt} 条消息'
-                if chat_id == cur_chat_id:
+                if prog_msg is not None:
                     await self.bot.edit_message(prog_msg, prog_text)
                 else:
-                    prog_msg = await self.bot.send_message(self._cfg.admin_id, prog_text)
+                    prog_msg = await self.bot.send_message(admin_id, prog_text)
                 last_prog_remaining = remaining_msg_cnt
 
-            cur_chat_id = chat_id
-
-        await self.backend.download_history(min_id=min_id, max_id=max_id, call_back=call_back)
-        await event.respond('历史记录下载完成')
+        await self.backend.download_history(chat_id, min_id, max_id, call_back)
+        if prog_msg is None:
+            await self.bot.send_message(admin_id, f'{chat_name} ({chat_id}) 下载完成')
+        else:
+            await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成')
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())
-        async def callback_query_handler(event):
+        async def callback_query_handler(event: events.CallbackQuery.Event):
             await self._callback_handler(event)
 
         @self.bot.on(events.NewMessage())
-        async def bot_message_handler(event):
-            try:
-                if event.chat_id != self._cfg.admin_id:
+        async def bot_message_handler(event: events.NewMessage.Event):
+            if event.chat_id != self._cfg.admin_id:
+                try:
                     await self._normal_msg_handler(event)
-            except Exception as e:
-                event.reply(f'Error occurs: {e}\n\nPlease contact the admin for fix')
-                raise e
-
-        @self.bot.on(events.NewMessage(chats=[self._cfg.admin_id]))
-        async def bot_message_handler(event):
-            try:
-                await self._admin_msg_handler(event)
-            except Exception as e:
-                await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
-                raise e
+                except Exception as e:
+                    event.reply(f'Error occurs: {e}\n\nPlease contact the admin for fix')
+                    raise e
+            else:
+                try:
+                    await self._admin_msg_handler(event)
+                except Exception as e:
+                    await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
+                    raise e
 
     async def _register_commands(self):
         admin_input_peer = None  # make IDE happy!
         try:
             admin_input_peer = await self.bot.get_input_entity(self._cfg.admin_id)
         except ValueError as e:
-            self._logger.critical(f'Admin ID {self._cfg.admin_id} is invalid, or you have not had any conversation with '
-                                  f'the bot yet. Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
+            self._logger.critical(
+                f'Admin ID {self._cfg.admin_id} is invalid, or you have not had any conversation with '
+                f'the bot yet. Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
             exit(-1)
 
         admin_commands = [
@@ -189,6 +207,7 @@ class BotFrontend:
         ]
         commands = [
             BotCommand(command="random", description='随机返回一条已索引消息'),
+            BotCommand(command="chats", description='选择聊天'),
         ]
         await self.bot(
             SetBotCommandsRequest(
@@ -205,12 +224,12 @@ class BotFrontend:
             )
         )
 
-    def _render_respond_text(self, result: SearchResult, used_time: float):
+    async def _render_respond_text(self, result: SearchResult, used_time: float):
         string_builder = []
         hits = result.hits
         string_builder.append(f'共搜索到 {result.total_results} 个结果，用时 {used_time: .3} 秒：\n\n')
         for hit in result.hits:
-            chat_title = self.backend.translate_chat_id(hit.msg.chat_id)
+            chat_title = await self.backend.translate_chat_id(hit.msg.chat_id)
             string_builder.append(f'<b>{chat_title} [{hit.msg.post_time}]</b>\n')
             string_builder.append(f'<a href="{hit.msg.url}">{hit.highlighted}</a>\n')
         return ''.join(string_builder)
