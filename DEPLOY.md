@@ -25,18 +25,17 @@ pip install -r requirement.txt
 ```shell
 mkdir tg_searcher
 cd tg_searcher
-wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/docker-compose.yaml.sample -O docker-compose.yaml
+wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/docker-compose.sample.yaml -O docker-compose.yaml
 mkdir config
-wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/searcher.yaml.example -O config/searcher.yaml
 vi config/searcher.yaml  # 修改 searcher.yaml（见下）
 ```
 
-需要保证 `searcher.yaml` 中: `redis host`=`redis`, `redis port`=`6379`, `runtime_dir`=`/app/config/tg_searcher_data` ，其余注意事项参考上一节及配置文件中的注释。  
+需要保证 `searcher.yaml` 中: `redis: redis:6379`, `runtime_dir: /app/config/tg_searcher_data` ，其余注意事项参考上一节及配置文件中的注释。  
 `tg_searcher` 目录将含有 bot 运行所需及产生的所有资讯，谨防泄露。需要迁移时，整个目录迁移即可。
 
 ### 代理设置
 
-如果需要使用宿主机上的代理，需要正确配置 `proxy host` :
+如果需要使用宿主机上的代理，需要正确配置 `proxy host`:
 
 **Linux**: 使用默认的网络配置的情况下会是 `docker0` 虚拟网卡的 IP，一般是 `172.17.0.1`
 
@@ -61,7 +60,7 @@ docker start tg_searcher_redis
 docker start -ia tg_searcher  # 这时你将需要按指引登入账号，一切完成后 Ctrl-P Ctrl-Q 解离
 ```
 
-完成登入后，为了安全性着想，可以注释掉 `docker-compose.yaml` 里标明的两行（不是必须）。
+完成登入后，考虑到安全性，可以注释掉 `docker-compose.yaml` 里标明的两行（不是必须）。
 
 ```shell
 docker-compose down  # 先停止运行
