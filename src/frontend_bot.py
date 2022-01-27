@@ -121,9 +121,11 @@ class BotFrontend:
         elif text.startswith('/chats'):
             # TODO: support paging
             buttons = []
+            kw = text[7:].strip()
             for chat_id in self.backend.indexed_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
-                buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
+                if kw in chat_name:
+                    buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
             await event.respond('选择一个聊天', buttons=buttons)
 
         elif text.startswith('/'):

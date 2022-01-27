@@ -1,174 +1,89 @@
 # TG Searcher
 
-众所周知，Telegram 的搜索功能较弱，尤其是对于中文等 CJK 语言，由于 Telegram 无法对其进行正确的分词，因此很难搜到想要的内容。[EYHN/telegram-search](https://github.com/EYHN/telegram-search) 是一个基于 Elasticsearch 的工具，能够通过 bot 来提供较为理想的搜索服务，但是由于 Elasticsearch 不够轻量化，在配置较差的服务器上性能不理想，因此这里基于上述工具的代码进行了修改，使用了 [whoosh](https://whoosh.readthedocs.io) 这个纯 python 的全文搜索库来提供搜索功能，从而比较轻便地运行。
+众所周知，Telegram 的搜索功能较弱，尤其是对于中文等 CJK 语言，由于 Telegram 无法对其进行正确的分词，因此很难搜到想要的内容。本项目实现了一个通用的框架，用户可以对 Telegram 的会话建立索引，通过 bot 来便捷地搜索消息。
 
-## 示例
+## 配置指南
 
-[@sharzy_search_bot](https://t.me/sharzy_search_bot) 是一个部署的示例，它给 [@sharzy_talk](https://t.me/sharzy_talk) 提供搜索服务。发送任意文字，bot 即会返回搜索到的内容，并按照相关性排序。可以直接点击链接跳转。
+Searcher 分为前端和后端两个部分。后端部分是一个 userbot，使用一个普通用户的账号，负责获取 Telegram 中会话的消息，并且将其存入硬盘中的索引。
 
-![](https://p.sda1.dev/0/c0f19f7cab2aa58879e716e3f1cec538/image.png)
+前端负责处理和用户的交互，它可以有多种实现，目前实现了 Telegram bot 的前端。用户通过和这个 bot 账号对话来和后端进行交互，一般的用户可以通过 bot 来搜索消息；管理员除了可以用来搜索消息之外，还可以用它来管理后端的数据。
 
-## 部署和使用
+Searcher 使用 YAML 作为配置文件的格式，默认的配置文件位于 `./searcher.yaml`，用户可以通过命令行参数指定其它的配置文件位置。
 
-### 准备
+在填写配置文件之前，有下面几项准备工作：
+1. 在 [my.telegram.org](https://my.telegram.org) 申请一对 `api_id` 和 `api_hash`
+2. 如果使用 bot 前端，需要向 [BotFather](https://t.me/BotFather) 申请一个 bot 账号，获取它的 `bot_token`，为了确保管理员能收到 bot 发来的消息，申请之后给 bot 发送一条任意的消息。
+3. 找到管理员的用户 ID，可以通过向 [GetIDs Bot](https://t.me/getidsbot) 发送任意消息来获取自己的用户 ID。
 
-1. 在[这里](https://my.telegram.org/apps)申请一个 Telegram App，并获得一组 `api_id` （形如 `1430968`）和 `api_hash`（形如 `07689061c27182818012e05c1987a998`）。
+```yaml
+common:
+  # 当前 Searcher 实例的名称，防止部署多个实例的时候文件冲突
+  name: sharzy_test 
+  
+  # 运行时存储索引文件、session 文件等的位置，多个实例可以使用相同的位置
+  runtime_dir: /var/lib/tg_searcher  
 
-2. 在 [@Bot Father](https://t.me/BotFather) 中注册一个 bot，获得一个 `token`（形如 `1023456789:AbCd44534523241-dsSD324ljkjldsafgfdgf4dD`）。
+  # 用于访问 Telegram 的代理，支持 socks5 和 http 协议，如不需要可以去掉该行
+  proxy: socks5://localhost:1080
+  
+  api_id: 1234567
+  api_hash: 17a89121c4347182b112e15c1517a998
 
-3. 本服务需要一个 Telegram 帐号来读取对话中的消息，同时通过这个帐号来管理 bot 的运行。这个帐号称为管理员，我们需要找到这个管理员的 id。方法见[下文](#如何找到对话的-id)介绍。
+sessions:
+  - name: alice             # 用来标识 session 的名称，在配置文件中唯一即可
+    phone: '+18052426381'   # 用户的电话号码
 
-4. 找出对于需要提供搜索服务的对话（可以是私聊、群组、频道）的 id。方法同上。
+backends:
+  - id: public              # 用来标识后端的名称，在配置文件中唯一即可
+    use_session: alice      # 后端所使用的 session 的名称
+    config:
+      indexed_chats:        # 默认加入索引的会话 id 列表
+        - 1639873385        # 这个列表可以留空
+        - 1332829774        # bot 启动之后通过 /find_chat_id 命令可以找到想要索引的会话的 id
 
+  - id: personal
+    use_session: alice
+    config:
+      indexed_chats: []
 
-### 运行
+frontends:
+  - type: bot               # 目前只支持 bot 类型的前端
+    id: public
+    use_backend: public     # 使用的后端的名称
+    config:
+      admin_id: 619376577   # 管理员的用户 ID
+      bot_token: 1200617810:CAF930aE75Vbac02K34tR-A8abzZP4uAq98
+      page_len: 10          # 搜索时每页显示的结果数量
+      redis: localhost:6379 # Redis 服务器的地址
 
-#### 手动运行
-
-1. 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
-
-2. 确保 python 版本在 3.7 或以上。
-
-3. 将仓库代码克隆到服务器上，参考 `searcher.yaml.example` 文件填写配置文件，并将其重命名为 `searcher.yaml`；安装相关的 python 库。
-
-```shell script
-git clone https://github.com/SharzyL/tg_searcher.git
-cd tg_searcher
-pip install -r requirement.txt
+  - type: bot
+    id: private
+    use_backend: private
+    config:
+      admin_id: 619376577
+      bot_token: 2203317382:BkF390ab92kcb1b2ii2b4-1sbc39i20bb12
+      page_len: 10
+      redis: localhost:6379
 ```
 
-运行 `python main.py` ，首次运行时需要使用自己的账号信息登录。运行成功后 bot 会在 Telegram 中向管理员发送一条 `I am ready` 消息。
+关于如何运行和部署 Searcher，参见 [DEPLOY.md](./DEPLOY.md)
 
-bot 不会自动下载历史消息，使用管理员帐号向上面填写的账号向 bot 发送 `/download_history` 可以让 bot 从头开始下载历史消息。之后发送 / 删除 / 修改消息时，bot 会自行更新数据库，无需干预。这个命令可以带有两个可选的参数，分别代表要下载的消息的最大 id 和最小 id。例如，发送 `/download_history 100 500` 可以下载所有 id 在 100 和 500 之间的消息（包括 100 和 500）。如果第二个参数没有指定，那么会下载所有 id 不小于第一个参数的消息。
+## Telegram Bot 前端
 
-如果在配置文件中指定 `private_mode: true`，那么除了在 `private_whitelist` 中指定 id 的用户，其它用户无法看到搜索到的消息的内容。如果指定 `random_mode: true`，那么当用户分送 `/random` 指令时，会随机返回一条已索引消息。
+Telegram Bot 的前端提供了如下功能：
 
-#### Docker Compose
+当用户给 bot 发送消息的时候，bot 默认会将消息的内容视为搜索的关键词，因此会返回根据这个关键词进行搜索的结果。除了简单的关键词查询以外，还支持如下的高级搜索语法
+    1. `"foo bar"` 搜索出现 `foo bar` 这个字符串的消息
+    2. `AND`, `OR`, `NOT` 可以用来组合搜索逻辑，例如 `NOT foo AND (bar OR woo)` 搜索所有没有出现 `foo`，并且出现了 `bar` 或者 `woo` 的消息
+    3. `*` 和 `?` 通配符，前者匹配任意多个字符，后者匹配一个字符。注意：包含通配符的搜索会较慢 。
+    4. 更详细的语法介绍，参见 whoosh 的[文档](https://whoosh.readthedocs.io/en/latest/querylang.html)
 
-##### 初次配置
+下面几条命令任何用户都可以使用：
+1. `/chats [keyword]`: 列出所有被索引的，标题中包含 `keyword` 的会话列表。如果没有指定 `keyword`，则返回所有的会话。bot 会返回一列按钮，点击一个按钮之后这条消息就对应了一个会话。之后给 bot 发送指令的时候如果回复了这条消息，bot 接下来进行的操作就会只操作这一个会话；如果是搜索指令，就会只在这个会话中进行搜索（如果指令支持对特定的会话进行操作的话）。
+2. `/random`：返回一条随机的消息（暂不支持指定会话）
 
-```shell
-mkdir tg_searcher
-cd tg_searcher
-wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/docker-compose.yaml.sample -O docker-compose.yaml
-mkdir config
-wget https://raw.githubusercontent.com/SharzyL/tg_searcher/master/searcher.yaml.example -O config/searcher.yaml
-vi config/searcher.yaml  # 修改 searcher.yaml（见下）
-```
-
-需要保证 `searcher.yaml` 中: `redis host`=`redis`, `redis port`=`6379`, `runtime_dir`=`/app/config/tg_searcher_data` ，其余注意事项参考上一节及配置文件中的注释。  
-`tg_searcher` 目录将含有 bot 运行所需及产生的所有资讯，谨防泄露。需要迁移时，整个目录迁移即可。
-
-###### 代理设置
-
-如果需要使用宿主机上的代理，需要正确配置 `proxy host` :
-
-**Linux**: 使用默认的网络配置的情况下会是 `docker0` 虚拟网卡的 IP，一般是 `172.17.0.1`
-
-```shell
-$ ip address
-
-*: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN group default
-    link/ether **:**:**:**:**:** brd ff:ff:ff:ff:ff:ff
-    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0
-       valid_lft forever preferred_lft forever
-```
-
-**Mac / Windows**: `host.docker.internal`
-
-除了在 tg_searcher 的配置文件中进行配置以外，注意宿主机的代理也需要设置监听这一 IP 地址，具体设置方法视代理客户端而定。
-
-##### 初次运行
-
-```shell
-docker-compose up --no-start
-docker start tg_searcher_redis
-docker start -ia tg_searcher  # 这时你将需要按指引登入账号，一切完成后 Ctrl-P Ctrl-Q 解离
-```
-
-完成登入后，为了安全性着想，可以注释掉 `docker-compose.yaml` 里标明的两行（不是必须）。
-
-```shell
-docker-compose down  # 先停止运行
-vi docker-compose.yaml  # 注释掉标明的两行
-```
-
-##### 再次运行
-
-以后需要再次运行时，进入 `tg_searcher` 目录，执行以下命令即可。
-
-```shell
-docker-compose up -d
-```
-
-##### 升级
-
-以后需要升级时，进入 `tg_searcher` 目录，执行以下命令即可。
-
-```shell
-docker-compose down  # 先停止运行
-docker-compose pull  # 更新镜像
-docker-compose up -d
-```
-
-## 如何找到对话的 id
-
-对话的 id 是一个正整数（目前一般不大于 10 位），有的时候你会遇到长达 13 位、以 100 开头的 id，或者带有负号的 id，这些是 Telegram 内部为了区分不同类型的对话而将原来的 id 进行了简单的转换。在本项目中，我们兼容这些 id，你可以在配置文件中使用任何一种 id。唯一的要求是管理员能够访问对应对话的消息。
-
-### 对于某些特定类型的对话
-
-如果对方的隐私设置里面没有禁止带引用的消息转发，那么直接将对方的消息转发到 @getidsbot 这个 bot 即可获得对方的 id。
-
-如果这个对话是频道，那么将频道的消息转发到 @getidsbot 也可以获得 id。
-
-如果这个对话是私有群组，那么在群组的任意一条的右键菜单中点击复制链接 (Copy Message Link) 按钮，可以得到一个类似于 `https://t.me/c/1234567890/154` 的链接，其中的第一个数字（本例中为 1234567890）即为群组的 id。
-
-**注意**：如果消息的右键菜单中没有复制链接的按钮，说明这个群不是超级群，群内的消息没有对应的链接（新建的私有群组默认处于这个状态），这会导致无法通过 bot 搜索结果中的链接跳转到对应的消息。若要将群组升级为超级群，可以打开群组设置，关掉向新成员隐藏历史消息的选项，或者将群组转为公有，在进行这样的操作之后，群组会不可逆地转换为超级群，每条在此之后发送的消息都有对应的链接。
-
-如果你有权限将 bot 拉入群，那么你可以将 @getidsbot 拉入群组，这个 bot 会告诉你群组的 id。在将 bot 拉入群后，对任何用户回复 `/user`，bot 便会告诉你回复的用户的 id。
-
-### 通用的方法
-
-如果上面这些方法都不奏效，你可以尝试下面的这些方法：
-
-一种方法是使用一些第三方客户端，例如 PlusMessager，这一客户端会在用户的 profile 页面显示用户的 id。
-
-另一种方法是运行下面这个脚本（注意修改其中的变量）：`python3 get_id.py some_keyword`，脚本会打印出所有名字里面包含 `some_keyword` 的对话及其 id，如果去掉这一参数，则打印出所有的对话及其 id。
-
-```python
-# get_id.py
-import asyncio
-from telethon import TelegramClient
-import sys
-
-api_id = 1430968  # change to your own id
-api_hash = '1023456789:AbCd44534523241-dsSD324ljkjldsafgfdgf4dD'  # change to your own hash
-proxy = ('socks5', '127.0.0.1', 1080)  # in case you need a proxy
-session_file = 'foo.session'  # the path to store your session file
-
-client = TelegramClient(session_file, api_id, api_hash, proxy=proxy)
-client.start()
-
-async def iter_diag():
-    async for c in client.iter_dialogs(ignore_migrated=True):
-        if len(sys.argv) <= 1 or sys.argv[1] in c.name:
-            print(f'{c.name} [{c.entity.id}]')
-
-async def main():
-    await iter_diag()
-
-asyncio.get_event_loop().run_until_complete(main())
-```
-
-## 说明
-
-### 关于消息链接
-由于私聊的消息和非超级群的消息均没有链接，因此这些对话我们无法通过 bot 在搜索结果中提供的链接跳转到对应消息。
-
-### 关于搜索语法
-在这个 bot 中我们使用了 [jieba](https://github.com/fxsjy/jieba) 库提供的中文分词，使用了 [whoosh](https://whoosh.readthedocs.io) 的默认算法，也支持 whoosh 自带的[高级搜索功能](https://whoosh.readthedocs.io/en/latest/querylang.html)。
-
-### 关于命令行参数
-在运行时如果传入 `-c` 参数，则会在清空之前记录的消息（即清除建立的消息索引）。
-
-如果传入 `-f /path/to/yaml` 参数，bot 会读取 `/path/to/yaml` 位置的配置文件，默认的配置文件目录为 `./searcher.yaml`。
+下面几条命令只有管理员可以使用：
+1. `/download_history [--max=MAX] [--min=MIN] [chat_id...]`: 下载某个会话的历史消息并将其进行索引。如果没有指定 `chat_id` 也没有通过回复 bot 的消息来指定会话，则会下载所有配置文件中指定的会话的历史消息。`MIN` 和 `MAX` 参数用于指定索引的消息的最小和最大 ID。
+2. `/stat`: 报告后端的状态
+3. `/clear`: 清除后端的所有索引，或者清除某个特定会话的索引
+4. `/find_chat_id keyword`: 列出所有后端的账号的所有会话中包含 `keyword` 的会话以及对应的 id

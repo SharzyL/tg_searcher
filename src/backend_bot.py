@@ -10,20 +10,14 @@ from indexer import Indexer, IndexMsg
 from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
-    def __init__(self, phone: Optional[str], indexed_chats: Iterable[int]):
-        self.phone: Optional[str] = phone
+    def __init__(self, indexed_chats: Iterable[int]):
         self.indexed_chats: set[int] = set(get_share_id(chat_id) for chat_id in indexed_chats)
 
 
 class BackendBot:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, clean_db: bool, backend_id: str):
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, client: TelegramClient, clean_db: bool, backend_id: str):
         self.id: str = backend_id
-        self.client = TelegramClient(
-            str(common_cfg.session_dir / f'backend_{self.id}.session'),
-            api_id=common_cfg.api_id,
-            api_hash=common_cfg.api_hash,
-            proxy=common_cfg.proxy,
-        )
+        self.client = client
 
         self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._logger = get_logger(f'bot-backend:{backend_id}')
@@ -35,10 +29,6 @@ class BackendBot:
 
     async def start(self):
         self._logger.info(f'init backend bot {self.id}')
-        if self._cfg.phone:
-            await self.client.start(phone=lambda: self._cfg.phone)
-        else:
-            await self.client.start()
 
         await self.client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
         for chat_id in self.indexed_chats:

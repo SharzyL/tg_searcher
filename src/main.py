@@ -5,6 +5,8 @@ from argparse import ArgumentParser
 from pathlib import Path
 import asyncio
 
+from telethon.client import TelegramClient
+
 from frontend_bot import BotFrontend, BotFrontendConfig
 from backend_bot import BackendBot, BackendBotConfig
 from common import CommonBotConfig
@@ -25,13 +27,27 @@ async def main():
 
     full_config = yaml.safe_load(Path(args.config).read_text())
     common_config = CommonBotConfig(**full_config['common'])
+
+    sessions: dict[str, TelegramClient] = dict()
     backends: dict[str, BackendBot] = dict()
     frontends: dict[str, BotFrontend] = dict()
+
+    for session_yaml in full_config['sessions']:
+        session_name = session_yaml['name']
+        client = TelegramClient(
+           str(common_config.session_dir / f'{session_name}.session'),
+           api_id=common_config.api_id,
+           api_hash=common_config.api_hash,
+           proxy=common_config.proxy,
+        )
+        await client.start(phone=lambda: session_yaml['phone'])
+        sessions[session_name] = client
 
     for backend_yaml in full_config['backends']:
         backend_id = backend_yaml['id']
         backend_config = BackendBotConfig(**backend_yaml['config'])
-        backend = BackendBot(common_config, backend_config, args.clear, backend_id)
+        session_name = backend_yaml['use_session']
+        backend = BackendBot(common_config, backend_config, sessions[session_name], args.clear, backend_id)
         await backend.start()
         if backend_id not in backends:
             backends[backend_id] = backend
