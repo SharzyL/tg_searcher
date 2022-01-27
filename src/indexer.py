@@ -3,13 +3,13 @@ import os
 import re
 from datetime import datetime
 import random
-from typing import Optional
+from typing import Optional, Union
 
-from whoosh.index import create_in, exists_in, open_dir
-from whoosh.fields import Schema, TEXT, ID, NUMERIC, DATETIME
+from whoosh import index
+from whoosh.fields import Schema, TEXT, ID, DATETIME
 from whoosh.qparser import QueryParser
 from whoosh.writing import IndexWriter
-from whoosh.query import Term, And, Or
+from whoosh.query import Term, Or
 import whoosh.highlight as highlight
 from jieba.analyse.analyzer import ChineseAnalyzer
 
@@ -19,14 +19,14 @@ class IndexMsg:
     schema = Schema(
         content=TEXT(stored=True, analyzer=ChineseAnalyzer()),
         url=ID(stored=True, unique=True),
-        chat_id=NUMERIC(stored=True),
+        chat_id=TEXT(stored=True),
         post_time=DATETIME(stored=True, sortable=True),
     )
 
-    def __init__(self, content: str, url: str, chat_id: int, post_time: datetime):
+    def __init__(self, content: str, url: str, chat_id: Union[int, str], post_time: datetime):
         self.content = content
         self.url = url
-        self.chat_id = chat_id
+        self.chat_id = str(chat_id)
         self.post_time = post_time
 
     def as_dict(self):
@@ -60,7 +60,8 @@ class SearchResult:
 class Indexer:
     # A wrapper of whoosh
 
-    def __init__(self, index_dir: Path, index_name: str, from_scratch: bool = False):
+    def __init__(self, index_dir: Path, from_scratch: bool = False):
+        index_name = 'index'
         if not Path(index_dir).exists():
             Path(index_dir).mkdir()
 
@@ -68,14 +69,14 @@ class Indexer:
             import shutil
             shutil.rmtree(index_dir)
             index_dir.mkdir()
-            self.ix = create_in(index_dir, IndexMsg.schema, index_name)
+            self.ix = index.create_in(index_dir, IndexMsg.schema, index_name)
 
         if from_scratch:
             _clear()
 
-        self.ix = open_dir(index_dir, index_name) \
-            if exists_in(index_dir, index_name) \
-            else create_in(index_dir, IndexMsg.schema, index_name)
+        self.ix = index.open_dir(index_dir, index_name) \
+            if index.exists_in(index_dir, index_name) \
+            else index.create_in(index_dir, IndexMsg.schema, index_name)
 
         self._clear = _clear  # use closure to avoid introducing too much members
         self.query_parser = QueryParser('content', IndexMsg.schema)
@@ -96,7 +97,7 @@ class Indexer:
     def search(self, q_str: str, in_chats: Optional[list[int]], page_len: int, page_num: int = 1) -> SearchResult:
         q = self.query_parser.parse(q_str)
         with self.ix.searcher() as searcher:
-            q_filter = in_chats and Or([Term('chat_id', chat_id) for chat_id in in_chats])
+            q_filter = in_chats and Or([Term('chat_id', str(chat_id)) for chat_id in in_chats])
             result_page = searcher.search_page(q, page_num, page_len, filter=q_filter,
                                                sortedby='post_time', reverse=True)
 
@@ -104,7 +105,11 @@ class Indexer:
                     for msg in result_page]
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
 
-    def count(self, **kw):
+    def list_indexed_chats(self) -> set[int]:
+        with self.ix.reader() as r:
+            return set(int(chat_id) for chat_id in r.field_terms('chat_id'))
+
+    def count_by_query(self, **kw):
         with self.ix.searcher() as s:
             return len(list(s.document_numbers(**kw)))
 

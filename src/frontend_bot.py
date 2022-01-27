@@ -67,8 +67,15 @@ class BotFrontend:
         await self.bot.start(bot_token=self._cfg.bot_token)
         await self._register_commands()
         self._register_hooks()
-        start_msg = 'bot 初始化完成\n\n' + await self.backend.get_stat()
-        await self.bot.send_message(self._cfg.admin_id, start_msg, parse_mode='html')
+        sb = ['bot 初始化完成\n\n', await self.backend.get_stat()]
+        chats_not_indexed = self.backend.indexed_chats_in_cfg - self.backend.indexed_chats
+        if len(chats_not_indexed) > 0:
+            sb.append(f'\n以下对话位于配置文件中但是未被索引，使用 /download_history 命令添加索引\n')
+            for chat_id in chats_not_indexed:
+                name = await self.backend.translate_chat_id(chat_id)
+                sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> ({chat_id})\n')
+
+        await self.bot.send_message(self._cfg.admin_id, ''.join(sb), parse_mode='html')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
@@ -126,7 +133,7 @@ class BotFrontend:
 
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
         text: str = event.raw_text
-        self._logger.info(f'Admin {event.chat_id} Queries "{text}"')
+        self._logger.info(f'Admin {event.chat_id} searches "{text}"')
         if text.startswith('/stat'):
             await event.respond(await self.backend.get_stat(), parse_mode='html')
 
@@ -134,7 +141,7 @@ class BotFrontend:
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
             min_id = args.min or 1
             max_id = args.max or 1 << 31 - 1
-            chat_ids = args.chats or self.get_selected_chat(event) or self.backend.indexed_chats
+            chat_ids = args.chats or self.get_selected_chat(event) or self.backend.indexed_chats_in_cfg
             for chat_id in chat_ids:
                 await self._download_history(chat_id, min_id, max_id)
 
@@ -143,8 +150,7 @@ class BotFrontend:
             self.backend.clear(chat_ids)
             if chat_ids:
                 for chat_id in chat_ids:
-                    chat_name = await self.backend.translate_chat_id(chat_id)
-                    await event.reply(f'{chat_name} ({chat_id}) 的索引已清除')
+                    await event.reply(f'{await self.backend.format_dialog_html(chat_id)} 的索引已清除')
             else:
                 await event.reply('全部索引已清除')
 
@@ -184,18 +190,19 @@ class BotFrontend:
         admin_id = self._cfg.admin_id
         chat_name = await self.backend.translate_chat_id(chat_id)
 
-        if chat_id not in self.backend.indexed_chats:
+        chat_html = await self.backend.format_dialog_html(chat_id)
+        if chat_id not in self.backend.indexed_chats_in_cfg:
             await self.bot.send_message(
                 admin_id,
-                f'警告：重启后端 bot 之后，{chat_name} ({chat_id}) 的索引可能失效，'
-                f'请将 {chat_id} 加入配置文件'
-            )
+                f'警告: 重启后端 bot 之后，{chat_html} 的索引可能失效，'
+                f'请将 {chat_id} 加入配置文件',
+                parse_mode='html')
         if min_id == 1 and max_id == 1 << 31 - 1 and not self.backend.is_empty(chat_id):
             await self.bot.send_message(
                 admin_id,
-                f'错误：{chat_name} ({chat_id}) 的索引非空，下载历史会导致索引重复消息，'
-                f'请先 /clear 清除索引，或者指定索引范围'
-            )
+                f'错误: {chat_html} 的索引非空，下载历史会导致索引重复消息，'
+                f'请先 /clear 清除索引，或者指定索引范围',
+                parse_mode='html')
             return
         cnt: int = 0
         prog_msg: Optional[TgMessage] = None
@@ -205,7 +212,7 @@ class BotFrontend:
             remaining_msg_cnt = msg_id - min_id
 
             if cnt % 100 == 0:
-                prog_text = f'"{chat_name}" ({chat_id}): 还需下载大约 {remaining_msg_cnt} 条消息'
+                prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
                     await self.bot.edit_message(prog_msg, prog_text)
                 else:
@@ -214,9 +221,9 @@ class BotFrontend:
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
         if prog_msg is None:
-            await self.bot.send_message(admin_id, f'{chat_name} ({chat_id}) 下载完成，共计 {cnt} 条消息')
+            await self.bot.send_message(admin_id, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
         else:
-            await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成，共计 {cnt} 条消息')
+            await self.bot.edit_message(prog_msg, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())

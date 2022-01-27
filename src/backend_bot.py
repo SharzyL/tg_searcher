@@ -2,7 +2,7 @@ import html
 from datetime import datetime
 
 from common import CommonBotConfig
-from typing import Optional
+from typing import Optional, Union, Iterable
 
 from telethon import TelegramClient, events
 
@@ -10,26 +10,28 @@ from indexer import Indexer, IndexMsg
 from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
-    def __init__(self, phone: Optional[str], indexed_chats: list):
+    def __init__(self, phone: Optional[str], indexed_chats: Iterable[int]):
         self.phone: Optional[str] = phone
-        self.indexed_chats: list = indexed_chats
+        self.indexed_chats: set[int] = set(get_share_id(chat_id) for chat_id in indexed_chats)
 
 
 class BackendBot:
     def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, clean_db: bool, backend_id: str):
-        self.id = backend_id
+        self.id: str = backend_id
         self.client = TelegramClient(
             str(common_cfg.session_dir / f'backend_{self.id}.session'),
             api_id=common_cfg.api_id,
             api_hash=common_cfg.api_hash,
             proxy=common_cfg.proxy,
         )
-        self.indexed_chats = cfg.indexed_chats
 
-        self._indexer: Indexer = Indexer(common_cfg.index_dir, backend_id, clean_db)
+        self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._logger = get_logger(f'bot-backend:{backend_id}')
         self._id_to_title_table: dict[int, str] = dict()
         self._cfg = cfg
+
+        self.indexed_chats_in_cfg: set[int] = cfg.indexed_chats
+        self.indexed_chats: set[int] = self._indexer.list_indexed_chats()
 
     async def start(self):
         self._logger.info(f'init backend bot {self.id}')
@@ -39,7 +41,7 @@ class BackendBot:
             await self.client.start()
 
         await self.client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
-        for chat_id in self._cfg.indexed_chats:
+        for chat_id in self.indexed_chats:
             chat_name = await self.translate_chat_id(chat_id)
             self._logger.info(f'ready to monitor "{chat_name}" ({chat_id})')
 
@@ -67,6 +69,8 @@ class BackendBot:
     async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
         writer = self._indexer.ix.writer()
         self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
+        if chat_id not in self.indexed_chats:
+            self.indexed_chats.add(chat_id)
         async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
             if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
                 share_id = get_share_id(chat_id)
@@ -79,8 +83,6 @@ class BackendBot:
                 )
                 self._indexer.add_document(msg, writer)
                 await call_back(tg_message.id)
-        if chat_id not in self.indexed_chats:
-            self.indexed_chats.append(chat_id)
         writer.commit()
 
     def clear(self, chat_ids: Optional[list[int]] = None):
@@ -92,25 +94,28 @@ class BackendBot:
             self._indexer.clear()
 
     async def get_stat(self):
-        sb = [
+        sb = [  # string builder
             f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
             f'总计 {len(self.indexed_chats)} 个对话被加入了索引：\n'
-        ]  # string builder
+        ]
         # TODO: print 'hidden' chats
         for chat_id, name in self._id_to_title_table.items():
-            num = self._indexer.count(chat_id=chat_id)
+            num = self._indexer.count_by_query(chat_id=str(chat_id))
             # TODO: handle PM URL
-            sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a>'
-                      f' ({chat_id}) '
+            sb.append(f'- {await self.format_dialog_html(chat_id)} '
                       f'共 {num} 条消息\n')
         return ''.join(sb)
 
     def is_empty(self, chat_id=None):
         if chat_id is not None:
             with self._indexer.ix.searcher() as searcher:
-                return not any(True for _ in searcher.document_numbers(chat_id=chat_id))
+                return not any(True for _ in searcher.document_numbers(chat_id=str(chat_id)))
         else:
             return self._indexer.ix.is_empty()
+
+    async def format_dialog_html(self, chat_id: int):
+        name = await self.translate_chat_id(chat_id)
+        return f'<a href = "https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> ({chat_id})'
 
     def _register_hooks(self):
         @self.client.on(events.NewMessage())
