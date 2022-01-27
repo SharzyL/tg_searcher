@@ -26,7 +26,7 @@ class IndexMsg:
     def __init__(self, content: str, url: str, chat_id: Union[int, str], post_time: datetime):
         self.content = content
         self.url = url
-        self.chat_id = str(chat_id)
+        self.chat_id = int(chat_id)
         self.post_time = post_time
 
     def as_dict(self):

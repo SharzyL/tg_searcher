@@ -24,12 +24,16 @@ class BotFrontendConfig:
             raise ValueError("No colon in redis host config")
         return redis_cfg[:colon_idx], int(redis_cfg[colon_idx + 1:])
 
-    def __init__(self, bot_token: str, redis: str, admin_id: int, page_len: int = 10):
+    def __init__(self, **kw):
         # TODO: private mode
-        self.bot_token = bot_token
-        self.admin_id = admin_id
-        self.page_len = page_len
-        self.redis_host: tuple[str, int] = self._parse_redis_cfg(redis)
+        self.bot_token: str = kw['bot_token']
+        self.admin_id: int = kw['admin_id']
+        self.page_len: int = kw.get('page_len', 10)
+        self.redis_host: tuple[str, int] = self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
+
+        self.private_mode: bool = kw.get('private_mode', False)
+        self.private_whitelist: set[int] = set(kw.get('private_whitelist', []))
+        self.private_whitelist.add(self.admin_id)
 
 
 class BotFrontend:
@@ -235,6 +239,9 @@ class BotFrontend:
 
         @self.bot.on(events.NewMessage())
         async def bot_message_handler(event: events.NewMessage.Event):
+            if self._cfg.private_mode and event.chat_id not in self._cfg.private_whitelist:
+                await event.reply(f'由于隐私设置，您无法使用本 bot')
+                return
             if event.chat_id != self._cfg.admin_id:
                 try:
                     await self._normal_msg_handler(event)

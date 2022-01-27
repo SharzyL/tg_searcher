@@ -53,8 +53,8 @@ frontends:
     config:
       admin_id: 619376577   # 管理员的用户 ID
       bot_token: 1200617810:CAF930aE75Vbac02K34tR-A8abzZP4uAq98
-      page_len: 10          # 搜索时每页显示的结果数量
-      redis: localhost:6379 # Redis 服务器的地址
+      page_len: 10          # 搜索时每页显示的结果数量，默认为 10
+      redis: localhost:6379 # Redis 服务器的地址，默认为 localhost:6379
 
   - type: bot
     id: private
@@ -62,8 +62,11 @@ frontends:
     config:
       admin_id: 619376577
       bot_token: 2203317382:BkF390ab92kcb1b2ii2b4-1sbc39i20bb12
-      page_len: 10
-      redis: localhost:6379
+      # 如果开启了 private_mode，那么只有 private_whitelist 里的用户才能使用 bot
+      # 管理员默认位于 private_whitelist 中，无需额外添加
+      private_mode: true
+      private_whitelist:
+        - 719376577
 ```
 
 关于如何运行和部署 Searcher，参见 [DEPLOY.md](./DEPLOY.md)
