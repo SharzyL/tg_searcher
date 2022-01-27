@@ -67,7 +67,7 @@ class BotFrontend:
         await self.bot.start(bot_token=self._cfg.bot_token)
         await self._register_commands()
         self._register_hooks()
-        sb = ['bot 初始化完成\n\n', await self.backend.get_stat()]
+        sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
         chats_not_indexed = self.backend.indexed_chats_in_cfg - self.backend.indexed_chats
         if len(chats_not_indexed) > 0:
             sb.append(f'\n以下对话位于配置文件中但是未被索引，使用 /download_history 命令添加索引\n')
@@ -119,6 +119,7 @@ class BotFrontend:
             await event.respond(respond, parse_mode='html')
 
         elif text.startswith('/chats'):
+            # TODO: support paging
             buttons = []
             for chat_id in self.backend.indexed_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
@@ -135,18 +136,18 @@ class BotFrontend:
         text: str = event.raw_text
         self._logger.info(f'Admin {event.chat_id} searches "{text}"')
         if text.startswith('/stat'):
-            await event.respond(await self.backend.get_stat(), parse_mode='html')
+            await event.respond(await self.backend.get_index_status(), parse_mode='html')
 
         elif text.startswith('/download_history'):
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
             min_id = args.min or 1
             max_id = args.max or 1 << 31 - 1
-            chat_ids = args.chats or self.get_selected_chat(event) or self.backend.indexed_chats_in_cfg
+            chat_ids = args.chats or self._query_selected_chat(event) or self.backend.indexed_chats_in_cfg
             for chat_id in chat_ids:
                 await self._download_history(chat_id, min_id, max_id)
 
         elif text.startswith('/clear'):
-            chat_ids = self.get_selected_chat(event)
+            chat_ids = self._query_selected_chat(event)
             self.backend.clear(chat_ids)
             if chat_ids:
                 for chat_id in chat_ids:
@@ -158,7 +159,7 @@ class BotFrontend:
             q = text[14:].strip()
             sb = []
             msg = await event.reply('处理中…')
-            for chat_id in await self.backend.search_chat_id(q):
+            for chat_id in await self.backend.find_chat_id(q):
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
             await self.bot.edit_message(msg, ''.join(sb), parse_mode='html')
@@ -172,7 +173,7 @@ class BotFrontend:
             return
         start_time = time()
         q = event.raw_text
-        chats = self.get_selected_chat(event)
+        chats = self._query_selected_chat(event)
 
         self._logger.info(f'search in chat {chats}')
         result = self.backend.search(q, in_chats=chats, page_len=self._cfg.page_len, page_num=1)
@@ -245,7 +246,7 @@ class BotFrontend:
                     await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                     raise e
 
-    def get_selected_chat(self, event: events.NewMessage.Event) -> Optional[list[int]]:
+    def _query_selected_chat(self, event: events.NewMessage.Event) -> Optional[list[int]]:
         msg: TgMessage = event.message
         if msg.reply_to:
             return [int(self._redis.get(

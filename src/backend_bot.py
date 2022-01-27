@@ -47,24 +47,18 @@ class BackendBot:
 
         self._register_hooks()
 
-    async def translate_chat_id(self, chat_id: int):
-        if chat_id not in self._id_to_title_table:
-            entity = await self.client.get_entity(await self.client.get_input_entity(chat_id))
-            self._id_to_title_table[chat_id] = format_entity_name(entity)
-        return self._id_to_title_table[chat_id]
-
     def search(self, q: str, in_chats: Optional[list[int]], page_len: int, page_num: int):
         return self._indexer.search(q, in_chats, page_len, page_num)
 
-    async def search_chat_id(self, q: str) -> list[int]:
-        chat_ids = []
-        async for dialog in self.client.iter_dialogs():
-            if q in dialog.name:
-                chat_ids.append(dialog.entity.id)
-        return chat_ids
-
     def rand_msg(self) -> IndexMsg:
         return self._indexer.retrieve_random_document()
+
+    def is_empty(self, chat_id=None):
+        if chat_id is not None:
+            with self._indexer.ix.searcher() as searcher:
+                return not any(True for _ in searcher.document_numbers(chat_id=str(chat_id)))
+        else:
+            return self._indexer.ix.is_empty()
 
     async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
         writer = self._indexer.ix.writer()
@@ -93,7 +87,14 @@ class BackendBot:
         else:
             self._indexer.clear()
 
-    async def get_stat(self):
+    async def find_chat_id(self, q: str) -> list[int]:
+        chat_ids = []
+        async for dialog in self.client.iter_dialogs():
+            if q in dialog.name:
+                chat_ids.append(dialog.entity.id)
+        return chat_ids
+
+    async def get_index_status(self):
         sb = [  # string builder
             f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
             f'总计 {len(self.indexed_chats)} 个对话被加入了索引：\n'
@@ -106,12 +107,11 @@ class BackendBot:
                       f'共 {num} 条消息\n')
         return ''.join(sb)
 
-    def is_empty(self, chat_id=None):
-        if chat_id is not None:
-            with self._indexer.ix.searcher() as searcher:
-                return not any(True for _ in searcher.document_numbers(chat_id=str(chat_id)))
-        else:
-            return self._indexer.ix.is_empty()
+    async def translate_chat_id(self, chat_id: int):
+        if chat_id not in self._id_to_title_table:
+            entity = await self.client.get_entity(await self.client.get_input_entity(chat_id))
+            self._id_to_title_table[chat_id] = format_entity_name(entity)
+        return self._id_to_title_table[chat_id]
 
     async def format_dialog_html(self, chat_id: int):
         name = await self.translate_chat_id(chat_id)

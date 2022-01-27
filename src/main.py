@@ -13,7 +13,7 @@ from common import CommonBotConfig
 async def main():
     parser = ArgumentParser(description='A server to provide Telegram message searching')
     parser.add_argument('-c', '--clear', action='store_const', const=True, default=False,
-                        help='Build a new index from the scratch')
+                        help='Clear existing index')
     parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
                         help='Specify where the configuration yaml file lies')
     parser.add_argument('--debug', action='store_true', help='set loglevel to DEBUG')
