@@ -16,9 +16,10 @@ class BackendBotConfig:
 
 
 class BackendBot:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, clean_db: bool):
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, clean_db: bool, backend_id: str):
+        self.id = backend_id
         self.client = TelegramClient(
-            str(common_cfg.session_dir / 'indexer.session'),
+            str(common_cfg.session_dir / f'backend_{self.id}.session'),
             api_id=common_cfg.api_id,
             api_hash=common_cfg.api_hash,
             proxy=common_cfg.proxy,
@@ -30,7 +31,11 @@ class BackendBot:
         self._cfg = cfg
 
     async def start(self):
-        await self.client.start()
+        self._logger.info(f'init backend bot {self.id}')
+        if self._cfg.phone:
+            await self.client.start(phone=lambda: self._cfg.phone)
+        else:
+            await self.client.start()
 
         await self.client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
         for chat_id in self._cfg.indexed_chats:
@@ -80,7 +85,7 @@ class BackendBot:
         sb = []  # string builder
         sb.append(f'The status of backend:\n\n')
         sb.append(f'Count of messages: <b>{self._indexer.ix.doc_count()}</b>\n\n')
-        sb.append(f'{len(self._indexed_chats)} chats are being monitored:\n')
+        sb.append(f'{len(self._indexed_chats)} chats are being monitored\n')
         for chat_id, name in self._id_to_title_table.items():
             sb.append(f'  - <b>{html.escape(name)}</b> ({chat_id}):\n')
         return ''.join(sb)

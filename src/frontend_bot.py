@@ -27,19 +27,21 @@ class BotFrontendConfig:
 
 
 class BotFrontend:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: BotFrontendConfig, backend: BackendBot):
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BotFrontendConfig, frontend_id: str, backend: BackendBot):
         self.backend = backend
+        self.id = frontend_id
         self.bot = TelegramClient(
-            str(common_cfg.session_dir / 'frontend.session'),
+            str(common_cfg.session_dir / f'frontend_{self.id}.session'),
             api_id=common_cfg.api_id,
             api_hash=common_cfg.api_hash,
             proxy=common_cfg.proxy
         )
         self._cfg = cfg
         self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
-        self._logger = get_logger('su-frontend')
+        self._logger = get_logger('bot-frontend')
 
     async def start(self):
+        self._logger.info(f'init frontend bot {self.id}')
         await self.bot.start(bot_token=self._cfg.bot_token)
         await self._register_commands()
         self._register_hooks()
@@ -86,6 +88,9 @@ class BotFrontend:
             await self._search(event)
 
     async def _search(self, event):
+        if self.backend.is_empty():
+            await event.respond('当前索引为空，请先 /download_history 建立索引')
+            return
         start_time = time()
         q = event.raw_text
         result = self.backend.search(q, in_chats=None, page_len=self._cfg.page_len, page_num=1)

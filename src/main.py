@@ -24,21 +24,37 @@ async def main():
         logging.basicConfig(level=logging.DEBUG)
 
     full_config = yaml.safe_load(Path(args.config).read_text())
-    
-    backend_config = BackendBotConfig(**full_config['indexer'])
-    frontend_config = BotFrontendConfig(**full_config['single_user_frontend'])
     common_config = CommonBotConfig(**full_config['common'])
-    
-    backend = BackendBot(common_config, backend_config, args.clear)
-    await backend.start()
-    frontend = BotFrontend(common_config, frontend_config, backend)
-    await frontend.start()
+    backends: dict[str, BackendBot] = dict()
+    frontends: dict[str, BotFrontend] = dict()
 
-    try:
+    for backend_yaml in full_config['backends']:
+        backend_id = backend_yaml['id']
+        backend_config = BackendBotConfig(**backend_yaml['config'])
+        backend = BackendBot(common_config, backend_config, args.clear, backend_id)
+        await backend.start()
+        if backend_id not in backends:
+            backends[backend_id] = backend
+        else:
+            raise RuntimeError(f'Duplicated backend id: {backend_id}')
+
+    for frontend_yaml in full_config['frontends']:
+        backend_id = frontend_yaml['use_backend']
+        frontend_id = frontend_yaml['id']
+        frontend_config = BotFrontendConfig(**frontend_yaml['config'])
+        frontend = BotFrontend(common_config, frontend_config,
+                               frontend_id=frontend_id, backend=backends[backend_id])
+        await frontend.start()
+        if frontend_id not in frontends:
+            frontends[frontend_id] = frontend
+        else:
+            raise RuntimeError(f'Duplicated frontend id: {frontend_id}')
+
+    assert len(frontends) > 0
+    for frontend in frontends.values():
         await frontend.bot.run_until_disconnected()
-    except KeyboardInterrupt:
-        logging.critical("Interrupted by user")
 
 
 if __name__ == '__main__':
     asyncio.run(main())
+
