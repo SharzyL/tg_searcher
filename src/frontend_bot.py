@@ -33,6 +33,17 @@ class BotFrontendConfig:
 
 
 class BotFrontend:
+    """
+    Redis data protocol:
+    - query_text:{bot_chat_id}:{msg_id} => query text corresponding to a search result
+    - query_chats:{bot_chat_id}:{msg_id} => chat filter corresponding to a search result
+    - select_chat:{bot_chat_id}:{msg_id} => the chat_id selected
+
+    Button data protocol:
+    - select_chat={chat_id}
+    - search_page={page_number}
+    """
+
     def __init__(self, common_cfg: CommonBotConfig, cfg: BotFrontendConfig, frontend_id: str, backend: BackendBot):
         self.backend = backend
         self.id = frontend_id
@@ -59,17 +70,29 @@ class BotFrontend:
         await self.bot.send_message(self._cfg.admin_id, 'I am ready')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
-        if event.data and event.data != b'-1':
-            page_num = int(event.data)
-            q = self._redis.get('msg-' + str(event.message_id) + '-q')
-            self._logger.info(f'Query [{q}] turned to page {page_num}')
-            if q:
-                start_time = time()
-                result = self.backend.search(q, None, self._cfg.page_len, page_num)
-                used_time = time() - start_time
-                respond = await self._render_respond_text(result, used_time)
-                buttons = self._render_respond_buttons(result, page_num)
-                await event.edit(respond, parse_mode='html', buttons=buttons)
+        self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
+        if event.data:
+            data = event.data.decode('utf-8').split('=')
+            if data[0] == 'search_page':
+                page_num = int(data[1])
+                q = self._redis.get(f'query_text:{event.chat_id}:{event.message_id}')
+                chats = self._redis.get(f'query_chats:{event.chat_id}:{event.message_id}')
+                chats = chats and [int(chat_id) for chat_id in chats.split(',')]
+                self._logger.info(f'Query [{q}] (chats={chats}) turned to page {page_num}')
+                if q:
+                    start_time = time()
+                    result = self.backend.search(q, chats, self._cfg.page_len, page_num)
+                    used_time = time() - start_time
+                    response = await self._render_response_text(result, used_time)
+                    buttons = self._render_respond_buttons(result, page_num)
+                    await event.edit(response, parse_mode='html', buttons=buttons)
+            elif data[0] == 'select_chat':
+                chat_id = int(data[1])
+                chat_name = await self.backend.translate_chat_id(chat_id)
+                await event.edit(f'Reply to this message to operate on {chat_name} ({chat_id})')
+                self._redis.set(f'select_chat:{event.chat_id}:{event.message_id}', chat_id)
+            else:
+                raise RuntimeError(f'unknown callback data: {event.data}')
         await event.answer()
 
     async def _normal_msg_handler(self, event: events.NewMessage.Event):
@@ -77,13 +100,22 @@ class BotFrontend:
         self._logger.info(f'User {event.chat_id} Queries "{text}"')
 
         if not (text and text.strip()) or text.startswith('/start'):
+            # TODO: add help text
             return
 
         elif text.startswith('/random'):
             msg = self.backend.rand_msg()
-            respond = f'Random message from <b>{msg.chat_id} [{msg.post_time}]</b>\n'
+            chat_name = await self.backend.translate_chat_id(msg.chat_id)
+            respond = f'Random message from <b>{chat_name} [{msg.post_time}]</b>\n'
             respond += f'{msg.url}\n'
             await event.respond(respond, parse_mode='html')
+
+        elif text.startswith('/chats'):
+            buttons = []
+            for chat_id in self.backend.indexed_chats:
+                chat_name = await self.backend.translate_chat_id(chat_id)
+                buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
+            await event.respond('Choose a chat to work with', buttons=buttons)
 
         elif text.startswith('/'):
             await event.respond(f'错误：未知命令 {text.split()[0]}')
@@ -98,12 +130,10 @@ class BotFrontend:
             await event.respond(self.backend.get_stat(), parse_mode='html')
 
         elif text.startswith('/download_history'):
-            download_args = text.split()
-
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
             min_id = args.min or 1
             max_id = args.max or 1 << 31 - 1
-            chat_ids = args.chats or self.backend.indexed_chats
+            chat_ids = args.chats or self.get_selected_chat(event) or self.backend.indexed_chats
             for chat_id in chat_ids:
                 await self._download_history(chat_id, min_id, max_id)
 
@@ -111,8 +141,13 @@ class BotFrontend:
             self.backend.clear()
             await event.reply("索引已清除")
 
-        elif text.startswith('/chats'):
-            pass
+        elif text.startswith('/find_chat_id'):
+            q = text[14:].strip()
+            sb = []
+            for chat_id in await self.backend.search_chat_id(q):
+                chat_name = await self.backend.translate_chat_id(chat_id)
+                sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
+            await event.reply(''.join(sb), parse_mode='html')
 
         else:
             await self._normal_msg_handler(event)
@@ -123,13 +158,19 @@ class BotFrontend:
             return
         start_time = time()
         q = event.raw_text
-        result = self.backend.search(q, in_chats=None, page_len=self._cfg.page_len, page_num=1)
-        used_time = time() - start_time
-        respond = await self._render_respond_text(result, used_time)
-        buttons = self._render_respond_buttons(result, 1)
-        msg = await event.respond(respond, parse_mode='html', buttons=buttons)
+        chats = self.get_selected_chat(event)
 
-        self._redis.set('msg-' + str(msg.id) + '-q', q)
+        self._logger.info(f'search in chat {chats}')
+        result = self.backend.search(q, in_chats=chats, page_len=self._cfg.page_len, page_num=1)
+
+        used_time = time() - start_time
+        respond = await self._render_response_text(result, used_time)
+        buttons = self._render_respond_buttons(result, 1)
+        msg: TgMessage = await event.respond(respond, parse_mode='html', buttons=buttons)
+
+        self._redis.set(f'query_text:{event.chat_id}:{msg.id}', q)
+        if chats:
+            self._redis.set(f'query_chats:{event.chat_id}:{msg.id}', ','.join(map(str, chats)))
 
     async def _download_history(self, chat_id: int, min_id: int, max_id: int):
         admin_id = self._cfg.admin_id
@@ -148,20 +189,20 @@ class BotFrontend:
                 f'请先 /clear 清除索引，或者指定索引范围'
             )
             return
-        last_prog_remaining: Optional[int] = None
+        cnt: int = 0
         prog_msg: Optional[TgMessage] = None
 
         async def call_back(msg_id):
-            nonlocal prog_msg, last_prog_remaining
+            nonlocal prog_msg, cnt
             remaining_msg_cnt = msg_id - min_id
 
-            if last_prog_remaining is None or remaining_msg_cnt < last_prog_remaining - 100:
-                prog_text = f'"{chat_name}" ({chat_id}): 还需下载 {remaining_msg_cnt} 条消息'
+            if cnt % 100 == 0:
+                prog_text = f'"{chat_name}" ({chat_id}): 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
                     await self.bot.edit_message(prog_msg, prog_text)
                 else:
                     prog_msg = await self.bot.send_message(admin_id, prog_text)
-                last_prog_remaining = remaining_msg_cnt
+            cnt += 1
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
         if prog_msg is None:
@@ -189,6 +230,15 @@ class BotFrontend:
                     await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                     raise e
 
+    def get_selected_chat(self, event: events.NewMessage.Event) -> Optional[list[int]]:
+        msg: TgMessage = event.message
+        if msg.reply_to:
+            return [int(self._redis.get(
+                f'select_chat:{event.chat_id}:{msg.reply_to.reply_to_msg_id}'
+            ))]
+        else:
+            return None
+
     async def _register_commands(self):
         admin_input_peer = None  # make IDE happy!
         try:
@@ -204,6 +254,8 @@ class BotFrontend:
             BotCommand(command="random", description='随机返回一条已索引消息'),
             BotCommand(command="stat", description='索引状态'),
             BotCommand(command="clear", description='清除索引'),
+            BotCommand(command="find_chat_id", description='获取聊天 id'),
+            BotCommand(command="chats", description='选择聊天'),
         ]
         commands = [
             BotCommand(command="random", description='随机返回一条已索引消息'),
@@ -224,10 +276,8 @@ class BotFrontend:
             )
         )
 
-    async def _render_respond_text(self, result: SearchResult, used_time: float):
-        string_builder = []
-        hits = result.hits
-        string_builder.append(f'共搜索到 {result.total_results} 个结果，用时 {used_time: .3} 秒：\n\n')
+    async def _render_response_text(self, result: SearchResult, used_time: float):
+        string_builder = [f'共搜索到 {result.total_results} 个结果，用时 {used_time: .3} 秒：\n\n']
         for hit in result.hits:
             chat_title = await self.backend.translate_chat_id(hit.msg.chat_id)
             string_builder.append(f'<b>{chat_title} [{hit.msg.post_time}]</b>\n')
@@ -235,17 +285,17 @@ class BotFrontend:
         return ''.join(string_builder)
 
     def _render_respond_buttons(self, result, cur_page_num):
-        former_page, former_text = ('-1', ' ') \
+        former_page, former_text = (None, ' ') \
             if cur_page_num == 1 \
-            else (str(cur_page_num - 1), '上一页⬅️')
-        next_page, next_text = ('-1', ' ') \
-            if result.is_last_page else \
-            (str(cur_page_num + 1), '➡️下一页')
+            else (f'search_page={cur_page_num - 1}', '上一页⬅️')
+        next_page, next_text = (None, ' ') \
+            if result.is_last_page \
+            else (f'search_page={cur_page_num + 1}', '➡️下一页')
         total_pages = - (- result.total_results // self._cfg.page_len)  # use floor to simulate ceil function
         return [
             [
                 Button.inline(former_text, former_page),
-                Button.inline(f'{cur_page_num} / {total_pages}', '-1'),
+                Button.inline(f'{cur_page_num} / {total_pages}', None),
                 Button.inline(next_text, next_page),
             ]
         ]
