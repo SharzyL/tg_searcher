@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import asyncio
 
-from frontend_bot import SingleUserFrontend, SingleUserFrontendConfig
+from frontend_bot import BotFrontend, BotFrontendConfig
 from backend_bot import BackendBot, BackendBotConfig
 from common import CommonBotConfig
 
@@ -26,12 +26,12 @@ async def main():
     full_config = yaml.safe_load(Path(args.config).read_text())
     
     backend_config = BackendBotConfig(**full_config['indexer'])
-    frontend_config = SingleUserFrontendConfig(**full_config['single_user_frontend'])
+    frontend_config = BotFrontendConfig(**full_config['single_user_frontend'])
     common_config = CommonBotConfig(**full_config['common'])
     
     backend = BackendBot(common_config, backend_config, args.clear)
     await backend.start()
-    frontend = SingleUserFrontend(common_config, frontend_config, backend)
+    frontend = BotFrontend(common_config, frontend_config, backend)
     await frontend.start()
 
     try:

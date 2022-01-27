@@ -1,3 +1,4 @@
+import html
 from datetime import datetime
 
 from common import CommonBotConfig
@@ -9,8 +10,6 @@ from indexer import Indexer, Message, SearchResult
 from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
-    yaml_tag = u'!indexer'
-
     def __init__(self, phone: Optional[str], indexed_chats: list):
         self.phone: Optional[str] = phone
         self.indexed_chats: list = indexed_chats
@@ -44,8 +43,8 @@ class BackendBot:
     def translate_chat_id(self, chat_id: int):
         return self._id_to_title_table[chat_id]
 
-    def search(self, q: str, page_len: int, page_num: int):
-        return self._indexer.search(q, page_len, page_num)
+    def search(self, q: str, in_chats: Optional[list[int]], page_len: int, page_num: int):
+        return self._indexer.search(q, in_chats, page_len, page_num)
 
     def rand_msg(self) -> Message:
         return self._indexer.retrieve_random_document()
@@ -54,30 +53,40 @@ class BackendBot:
         # TODO
         ...
 
-    async def download_history(self, min_id: Optional[int], max_id: Optional[int], call_back=None):
+    async def download_history(self, min_id: int, max_id: int, call_back=None):
+        writer = self._indexer.ix.writer()
         for chat_id in self._cfg.indexed_chats:
             self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
-            with self._indexer.ix.writer() as writer:
-                async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
-                    # FIXME: it seems that iterating over PM return nothing?
-                    self._logger.info(f'On id {tg_message.id}')
-                    if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
-                        share_id = get_share_id(chat_id)
-                        url = f'https://t.me/c/{share_id}/{tg_message.id}'
-                        msg = Message(
-                            content=strip_content(tg_message.raw_text),
-                            url=url,
-                            chat_id=chat_id,
-                            post_time=datetime.fromtimestamp(tg_message.date.timestamp())
-                        )
-                        writer.add_document(**msg.as_dict())
+            async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
+                # FIXME: it seems that iterating over PM return nothing?
+                if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
+                    share_id = get_share_id(chat_id)
+                    url = f'https://t.me/c/{share_id}/{tg_message.id}'
+                    msg = Message(
+                        content=strip_content(tg_message.raw_text),
+                        url=url,
+                        chat_id=chat_id,
+                        post_time=datetime.fromtimestamp(tg_message.date.timestamp())
+                    )
+                    self._indexer.add_document(msg, writer)
+                    await call_back(chat_id, tg_message.id)
+            await call_back(chat_id, -1)  # indicating the end
+        writer.commit()
 
     def clear(self):
         self._indexer.clear()
 
     def get_stat(self):
-        # TODO
-        ...
+        sb = []  # string builder
+        sb.append(f'The status of backend:\n\n')
+        sb.append(f'Count of messages: <b>{self._indexer.ix.doc_count()}</b>\n\n')
+        sb.append(f'{len(self._indexed_chats)} chats are being monitored:\n')
+        for chat_id, name in self._id_to_title_table.items():
+            sb.append(f'  - <b>{html.escape(name)}</b> ({chat_id}):\n')
+        return ''.join(sb)
+
+    def is_empty(self):
+        return self._indexer.ix.is_empty()
 
     def _register_hooks(self):
         @self.client.on(events.NewMessage(chats=self._indexed_chats))
@@ -110,4 +119,3 @@ class BackendBot:
                     url = f'https://t.me/c/{share_id}/{msg_id}'
                     self._logger.info(f'Delete message {url}')
                     self._indexer.delete(url=url)
-

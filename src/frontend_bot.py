@@ -1,8 +1,9 @@
 from time import time
 from html import escape as html_escape
+from typing import Optional
 
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import BotCommand, BotCommandScopePeer
+from telethon.tl.types import Message as TgMessage, BotCommand, BotCommandScopePeer, BotCommandScopeDefault
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 
@@ -10,9 +11,7 @@ from common import CommonBotConfig, get_logger
 from backend_bot import BackendBot
 from indexer import Message, SearchResult
 
-class SingleUserFrontendConfig:
-    yaml_tag = 'single_user_frontend'
-
+class BotFrontendConfig:
     @staticmethod
     def _parse_redis_cfg(redis_cfg: str) -> tuple[str, int]:
         colon_idx = redis_cfg.index(':')
@@ -27,8 +26,8 @@ class SingleUserFrontendConfig:
         self.redis_host: tuple[str, int] = self._parse_redis_cfg(redis)
 
 
-class SingleUserFrontend:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: SingleUserFrontendConfig, backend: BackendBot):
+class BotFrontend:
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BotFrontendConfig, backend: BackendBot):
         self.backend = backend
         self.bot = TelegramClient(
             str(common_cfg.session_dir / 'frontend.session'),
@@ -63,12 +62,8 @@ class SingleUserFrontend:
     async def _msg_handler(self, event):
         text = event.raw_text
         self._logger.info(f'User {event.chat_id} Queries [{text}]')
-        start_time = time()
 
-        if not (event.raw_text and event.raw_text.strip()):
-            return
-
-        elif event.raw_text.startswith('/start'):
+        if not (event.raw_text and event.raw_text.strip()) or event.raw_text.startswith('/start'):
             return
 
         elif event.raw_text.startswith('/random'):
@@ -77,23 +72,70 @@ class SingleUserFrontend:
             respond += f'{msg.url}\n'
             await event.respond(respond, parse_mode='html')
 
+        elif event.raw_text.startswith('/stat') and event.chat_id == self._cfg.admin_id:
+            await event.respond(self.backend.get_stat(), parse_mode='html')
+
         elif event.raw_text.startswith('/download_history') and event.chat_id == self._cfg.admin_id:
-            download_args = event.raw_text.split()
-            min_id = max(int(download_args[1]), 1) if len(download_args) > 1 else 1
-            max_id = int(download_args[2]) if len(download_args) > 2 else 1 << 31 - 1
-            await event.respond('开始下载历史记录')
-            # TODO: is auto clear necessary?
-            await self.backend.download_history(min_id=min_id, max_id=max_id)
+            await self._download_history(event)
+
+        elif event.raw_text.startswith('/clear') and event.chat_id == self._cfg.admin_id:
+            self.backend.clear()
+            await event.reply("索引已清除")
 
         else:
-            q = event.raw_text
-            result = self.backend.search(q, page_len=self._cfg.page_len, page_num=1)
-            used_time = time() - start_time
-            respond = self._render_respond_text(result, used_time)
-            buttons = self._render_respond_buttons(result, 1)
-            msg = await event.respond(respond, parse_mode='html', buttons=buttons)
+            await self._search(event)
 
-            self._redis.set('msg-' + str(msg.id) + '-q', q)
+    async def _search(self, event):
+        start_time = time()
+        q = event.raw_text
+        result = self.backend.search(q, in_chats=None, page_len=self._cfg.page_len, page_num=1)
+        used_time = time() - start_time
+        respond = self._render_respond_text(result, used_time)
+        buttons = self._render_respond_buttons(result, 1)
+        msg = await event.respond(respond, parse_mode='html', buttons=buttons)
+
+        self._redis.set('msg-' + str(msg.id) + '-q', q)
+
+    async def _download_history(self, event):
+        admin_id = event.chat_id
+        download_args = event.raw_text.split()
+        if len(download_args) == 1 and not self.backend.is_empty():
+            await self.bot.send_message(admin_id, '当前的索引非空，下载历史会导致索引重复消息，请先 /clear 清除索引')
+            return
+
+        min_id = max(int(download_args[1]), 1) if len(download_args) > 1 else 1
+        max_id = int(download_args[2]) if len(download_args) > 2 else 1 << 31 - 1
+        # TODO: is auto clear necessary?
+
+        await event.respond('开始下载历史记录')
+
+        last_prog_remaining: Optional[int] = None
+        cur_chat_id: Optional[int] = None
+        prog_msg: Optional[TgMessage] = None
+
+        async def call_back(chat_id, msg_id):
+            nonlocal prog_msg, last_prog_remaining, cur_chat_id
+            chat_name = self.backend.translate_chat_id(chat_id)
+            remaining_msg_cnt = msg_id - min_id
+
+            if msg_id < 0:
+                if prog_msg is None:
+                    await self.bot.send_message(f'{chat_name} ({chat_id}) 下载完成')
+                else:
+                    await self.bot.edit_message(prog_msg, f'{chat_name} ({chat_id}) 下载完成')
+
+            elif chat_id != cur_chat_id or remaining_msg_cnt < last_prog_remaining - 100:
+                prog_text = f'"{chat_name}" ({chat_id}): 还需下载 {remaining_msg_cnt} 条消息'
+                if chat_id == cur_chat_id:
+                    await self.bot.edit_message(prog_msg, prog_text)
+                else:
+                    prog_msg = await self.bot.send_message(self._cfg.admin_id, prog_text)
+                last_prog_remaining = remaining_msg_cnt
+
+            cur_chat_id = chat_id
+
+        await self.backend.download_history(min_id=min_id, max_id=max_id, call_back=call_back)
+        await event.respond('历史记录下载完成')
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())
@@ -118,13 +160,25 @@ class SingleUserFrontend:
                                   f'the bot yet. Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
             exit(-1)
 
-        commands = [
+        admin_commands = [
             BotCommand(command="download_history", description='[ START[ END]] 下载历史消息'),
+            BotCommand(command="random", description='随机返回一条已索引消息'),
+            BotCommand(command="stat", description='索引状态'),
+            BotCommand(command="clear", description='清除索引'),
+        ]
+        commands = [
             BotCommand(command="random", description='随机返回一条已索引消息'),
         ]
         await self.bot(
             SetBotCommandsRequest(
                 scope=BotCommandScopePeer(admin_input_peer),
+                lang_code='',
+                commands=admin_commands
+            )
+        )
+        await self.bot(
+            SetBotCommandsRequest(
+                scope=BotCommandScopeDefault(),
                 lang_code='',
                 commands=commands
             )

@@ -3,12 +3,16 @@ import os
 import re
 from datetime import datetime
 import random
+from typing import Optional
 
 from whoosh.index import create_in, exists_in, open_dir
 from whoosh.fields import Schema, TEXT, ID, STORED, DATETIME
 from whoosh.qparser import QueryParser
+from whoosh.writing import IndexWriter
+from whoosh.query import Term, And, Or
 import whoosh.highlight as highlight
 from jieba.analyse.analyzer import ChineseAnalyzer
+
 
 class Message:
     # TODO: add sender to Message schema
@@ -33,10 +37,12 @@ class Message:
             'post_time': self.post_time,
         }
 
+
 class SearchHit:
     def __init__(self, msg: Message, highlighted: str):
         self.msg = msg
         self.highlighted = highlighted
+
 
 class SearchResult:
     def __init__(self, hits: list[SearchHit], is_last_page: bool, total_results: int):
@@ -44,26 +50,26 @@ class SearchResult:
         self.is_last_page = is_last_page
         self.total_results = total_results
 
+
 class Indexer:
     # A wrapper of whoosh
 
-    def __init__(self, pickle_path, index_name, from_scratch=False):
-        if not Path(pickle_path).exists():
-            Path(pickle_path).mkdir()
+    def __init__(self, index_dir: Path, index_name: str, from_scratch: bool = False):
+        if not Path(index_dir).exists():
+            Path(index_dir).mkdir()
 
         def _clear():
-            pattern = re.compile(f'^_?{index_name}.*')
-            for file in Path(pickle_path).iterdir():
-                if pattern.match(file.name):
-                    os.remove(str(file))
-            self.ix = create_in(pickle_path, Message.schema, index_name)
+            import shutil
+            shutil.rmtree(index_dir)
+            index_dir.mkdir()
+            self.ix = create_in(index_dir, Message.schema, index_name)
 
         if from_scratch:
             _clear()
 
-        self.ix = open_dir(pickle_path, index_name) \
-            if exists_in(pickle_path, index_name) \
-            else create_in(pickle_path, Message.schema, index_name)
+        self.ix = open_dir(index_dir, index_name) \
+            if exists_in(index_dir, index_name) \
+            else create_in(index_dir, Message.schema, index_name)
 
         self._clear = _clear  # use closure to avoid introducing too much members
         self.query_parser = QueryParser('content', Message.schema)
@@ -74,16 +80,18 @@ class Indexer:
             msg_dict = random.choice(list(searcher.documents()))
             return Message(**msg_dict)
 
-    def add_document(self, message: Message, writer=None):
+    def add_document(self, message: Message, writer: Optional[IndexWriter] = None):
         if writer is not None:
             writer.add_document(**message.as_dict())
         else:
             with self.ix.writer() as writer:
                 writer.add_document(**message.as_dict())
 
-    def search(self, query: str, page_len, page_num=1) -> SearchResult:
-        q = self.query_parser.parse(query)
+    def search(self, q_str: str, in_chats: Optional[list[int]], page_len: int, page_num: int = 1) -> SearchResult:
+        q = self.query_parser.parse(q_str)
         with self.ix.searcher() as searcher:
+            if in_chats:
+                q = And(q, Or(*[Term('chat_id', chat_id) for chat_id in in_chats]))
             result_page = searcher.search_page(q, page_num, page_len,
                                                sortedby='post_time', reverse=True)
 

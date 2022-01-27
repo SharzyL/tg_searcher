@@ -32,8 +32,6 @@ def format_entity_name(entity):
         raise ValueError(f'Unknown entity {entity}')
 
 class CommonBotConfig:
-    yaml_tag = u'!Indexer'
-
     @staticmethod
     def _parse_proxy(proxy_str: str):
         url = url_parse.urlparse(proxy_str)
