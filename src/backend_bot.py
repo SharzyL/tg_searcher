@@ -2,7 +2,7 @@ import html
 from datetime import datetime
 
 from common import CommonBotConfig
-from typing import Optional, Union, Iterable
+from typing import Optional, Union, Iterable, List, Set, Dict
 
 from telethon import TelegramClient, events
 
@@ -11,7 +11,7 @@ from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
     def __init__(self, indexed_chats: Iterable[int]):
-        self.indexed_chats: set[int] = set(get_share_id(chat_id) for chat_id in indexed_chats)
+        self.indexed_chats: Set[int] = set(get_share_id(chat_id) for chat_id in indexed_chats)
 
 
 class BackendBot:
@@ -21,11 +21,11 @@ class BackendBot:
 
         self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._logger = get_logger(f'bot-backend:{backend_id}')
-        self._id_to_title_table: dict[int, str] = dict()
+        self._id_to_title_table: Dict[int, str] = dict()
         self._cfg = cfg
 
-        self.indexed_chats_in_cfg: set[int] = cfg.indexed_chats
-        self.indexed_chats: set[int] = self._indexer.list_indexed_chats()
+        self.indexed_chats_in_cfg: Set[int] = cfg.indexed_chats
+        self.indexed_chats: Set[int] = self._indexer.list_indexed_chats()
 
     async def start(self):
         self._logger.info(f'init backend bot {self.id}')
@@ -37,7 +37,7 @@ class BackendBot:
 
         self._register_hooks()
 
-    def search(self, q: str, in_chats: Optional[list[int]], page_len: int, page_num: int):
+    def search(self, q: str, in_chats: Optional[List[int]], page_len: int, page_num: int):
         return self._indexer.search(q, in_chats, page_len, page_num)
 
     def rand_msg(self) -> IndexMsg:
@@ -69,7 +69,7 @@ class BackendBot:
                 await call_back(tg_message.id)
         writer.commit()
 
-    def clear(self, chat_ids: Optional[list[int]] = None):
+    def clear(self, chat_ids: Optional[List[int]] = None):
         if chat_ids is not None:
             for chat_id in chat_ids:
                 with self._indexer.ix.writer() as w:
@@ -77,7 +77,7 @@ class BackendBot:
         else:
             self._indexer.clear()
 
-    async def find_chat_id(self, q: str) -> list[int]:
+    async def find_chat_id(self, q: str) -> List[int]:
         chat_ids = []
         async for dialog in self.client.iter_dialogs():
             if q in dialog.name:
@@ -89,7 +89,6 @@ class BackendBot:
             f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
             f'总计 {len(self.indexed_chats)} 个对话被加入了索引：\n'
         ]
-        # TODO: print 'hidden' chats
         for chat_id, name in self._id_to_title_table.items():
             num = self._indexer.count_by_query(chat_id=str(chat_id))
             # TODO: handle PM URL

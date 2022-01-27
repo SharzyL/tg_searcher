@@ -1,9 +1,7 @@
 from pathlib import Path
-import os
-import re
 from datetime import datetime
 import random
-from typing import Optional, Union
+from typing import Optional, Union, List, Set
 
 from whoosh import index
 from whoosh.fields import Schema, TEXT, ID, DATETIME
@@ -33,7 +31,7 @@ class IndexMsg:
         return {
             'content': self.content,
             'url': self.url,
-            'chat_id': self.chat_id,
+            'chat_id': str(self.chat_id),
             'post_time': self.post_time,
         }
 
@@ -51,7 +49,7 @@ class SearchHit:
 
 
 class SearchResult:
-    def __init__(self, hits: list[SearchHit], is_last_page: bool, total_results: int):
+    def __init__(self, hits: List[SearchHit], is_last_page: bool, total_results: int):
         self.hits = hits
         self.is_last_page = is_last_page
         self.total_results = total_results
@@ -94,7 +92,7 @@ class Indexer:
             with self.ix.writer() as writer:
                 writer.add_document(**message.as_dict())
 
-    def search(self, q_str: str, in_chats: Optional[list[int]], page_len: int, page_num: int = 1) -> SearchResult:
+    def search(self, q_str: str, in_chats: Optional[List[int]], page_len: int, page_num: int = 1) -> SearchResult:
         q = self.query_parser.parse(q_str)
         with self.ix.searcher() as searcher:
             q_filter = in_chats and Or([Term('chat_id', str(chat_id)) for chat_id in in_chats])
@@ -105,7 +103,7 @@ class Indexer:
                     for msg in result_page]
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
 
-    def list_indexed_chats(self) -> set[int]:
+    def list_indexed_chats(self) -> Set[int]:
         with self.ix.reader() as r:
             return set(int(chat_id) for chat_id in r.field_terms('chat_id'))
 

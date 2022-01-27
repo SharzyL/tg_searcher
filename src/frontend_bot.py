@@ -1,6 +1,6 @@
 import html
 from time import time
-from typing import Optional
+from typing import Optional, List, Tuple, Set
 from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
@@ -18,21 +18,20 @@ from indexer import SearchResult
 
 class BotFrontendConfig:
     @staticmethod
-    def _parse_redis_cfg(redis_cfg: str) -> tuple[str, int]:
+    def _parse_redis_cfg(redis_cfg: str) -> Tuple[str, int]:
         colon_idx = redis_cfg.index(':')
         if colon_idx < 0:
             raise ValueError("No colon in redis host config")
         return redis_cfg[:colon_idx], int(redis_cfg[colon_idx + 1:])
 
     def __init__(self, **kw):
-        # TODO: private mode
         self.bot_token: str = kw['bot_token']
         self.admin_id: int = kw['admin_id']
         self.page_len: int = kw.get('page_len', 10)
-        self.redis_host: tuple[str, int] = self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
+        self.redis_host: Tuple[str, int] = self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
 
         self.private_mode: bool = kw.get('private_mode', False)
-        self.private_whitelist: set[int] = set(kw.get('private_whitelist', []))
+        self.private_whitelist: Set[int] = set(kw.get('private_whitelist', []))
         self.private_whitelist.add(self.admin_id)
 
 
@@ -221,9 +220,9 @@ class BotFrontend:
             if cnt % 100 == 0:
                 prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
-                    await self.bot.edit_message(prog_msg, prog_text)
+                    await self.bot.edit_message(prog_msg, prog_text, parse_mode='html')
                 else:
-                    prog_msg = await self.bot.send_message(admin_id, prog_text)
+                    prog_msg = await self.bot.send_message(admin_id, prog_text, parse_mode='html')
             cnt += 1
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
@@ -255,7 +254,7 @@ class BotFrontend:
                     await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                     raise e
 
-    def _query_selected_chat(self, event: events.NewMessage.Event) -> Optional[list[int]]:
+    def _query_selected_chat(self, event: events.NewMessage.Event) -> Optional[List[int]]:
         msg: TgMessage = event.message
         if msg.reply_to:
             return [int(self._redis.get(

@@ -43,12 +43,13 @@ async def main():
         await client.start(phone=lambda: session_yaml['phone'])
         sessions[session_name] = client
 
+    async_tasks = []
     for backend_yaml in full_config['backends']:
         backend_id = backend_yaml['id']
         backend_config = BackendBotConfig(**backend_yaml['config'])
         session_name = backend_yaml['use_session']
         backend = BackendBot(common_config, backend_config, sessions[session_name], args.clear, backend_id)
-        await backend.start()
+        async_tasks.append(backend.start())
         if backend_id not in backends:
             backends[backend_id] = backend
         else:
@@ -60,11 +61,14 @@ async def main():
         frontend_config = BotFrontendConfig(**frontend_yaml['config'])
         frontend = BotFrontend(common_config, frontend_config,
                                frontend_id=frontend_id, backend=backends[backend_id])
-        await frontend.start()
+        async_tasks.append(frontend.start())
         if frontend_id not in frontends:
             frontends[frontend_id] = frontend
         else:
             raise RuntimeError(f'Duplicated frontend id: {frontend_id}')
+
+    for task in async_tasks:
+        await task
 
     logging.info(f'Initialization ok')
     assert len(frontends) > 0
