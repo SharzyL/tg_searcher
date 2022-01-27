@@ -50,6 +50,7 @@ async def main():
         else:
             raise RuntimeError(f'Duplicated frontend id: {frontend_id}')
 
+    logging.info(f'Initialization ok')
     assert len(frontends) > 0
     for frontend in frontends.values():
         await frontend.bot.run_until_disconnected()

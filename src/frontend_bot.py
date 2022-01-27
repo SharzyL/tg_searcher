@@ -1,6 +1,7 @@
+import html
 from time import time
-from html import escape as html_escape
 from typing import Optional
+from traceback import format_exc
 
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import Message as TgMessage, BotCommand, BotCommandScopePeer, BotCommandScopeDefault
@@ -9,7 +10,7 @@ from redis import Redis
 
 from common import CommonBotConfig, get_logger
 from backend_bot import BackendBot
-from indexer import Message, SearchResult
+from indexer import SearchResult
 
 class BotFrontendConfig:
     @staticmethod
@@ -19,7 +20,8 @@ class BotFrontendConfig:
             raise ValueError("No colon in redis host config")
         return redis_cfg[:colon_idx], int(redis_cfg[colon_idx + 1:])
 
-    def __init__(self, bot_token: str, admin_id: int, page_len: int, redis: str):
+    def __init__(self, bot_token: str, redis: str, admin_id: int, page_len: int = 10):
+        # TODO: private mode
         self.bot_token = bot_token
         self.admin_id = admin_id
         self.page_len = page_len
@@ -61,7 +63,7 @@ class BotFrontend:
                 await event.edit(respond, parse_mode='html', buttons=buttons)
         await event.answer()
 
-    async def _msg_handler(self, event):
+    async def _normal_msg_handler(self, event):
         text = event.raw_text
         self._logger.info(f'User {event.chat_id} Queries [{text}]')
 
@@ -74,7 +76,13 @@ class BotFrontend:
             respond += f'{msg.url}\n'
             await event.respond(respond, parse_mode='html')
 
-        elif event.raw_text.startswith('/stat') and event.chat_id == self._cfg.admin_id:
+        else:
+            await self._search(event)
+
+    async def _admin_msg_handler(self, event):
+        text = event.raw_text
+        self._logger.info(f'Admin {event.chat_id} Queries [{text}]')
+        if event.raw_text.startswith('/stat') and event.chat_id == self._cfg.admin_id:
             await event.respond(self.backend.get_stat(), parse_mode='html')
 
         elif event.raw_text.startswith('/download_history') and event.chat_id == self._cfg.admin_id:
@@ -85,7 +93,7 @@ class BotFrontend:
             await event.reply("索引已清除")
 
         else:
-            await self._search(event)
+            await self._normal_msg_handler(event)
 
     async def _search(self, event):
         if self.backend.is_empty():
@@ -150,10 +158,18 @@ class BotFrontend:
         @self.bot.on(events.NewMessage())
         async def bot_message_handler(event):
             try:
-                await self._msg_handler(event)
+                if event.chat_id != self._cfg.admin_id:
+                    await self._normal_msg_handler(event)
             except Exception as e:
-                self._logger.error(f'Error occurs on processing bot request: {e}')
-                await event.reply(f'Error occurs on processing bot request: {e}')
+                event.reply(f'Error occurs: {e}\n\nPlease contact the admin for fix')
+                raise e
+
+        @self.bot.on(events.NewMessage(chats=[self._cfg.admin_id]))
+        async def bot_message_handler(event):
+            try:
+                await self._admin_msg_handler(event)
+            except Exception as e:
+                await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                 raise e
 
     async def _register_commands(self):
