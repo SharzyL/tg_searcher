@@ -76,10 +76,10 @@ frontends:
 Telegram Bot 的前端提供了如下功能：
 
 当用户给 bot 发送消息的时候，bot 默认会将消息的内容视为搜索的关键词，因此会返回根据这个关键词进行搜索的结果。除了简单的关键词查询以外，还支持如下的高级搜索语法
-    1. `"foo bar"` 搜索出现 `foo bar` 这个字符串的消息
-    2. `AND`, `OR`, `NOT` 可以用来组合搜索逻辑，例如 `NOT foo AND (bar OR woo)` 搜索所有没有出现 `foo`，并且出现了 `bar` 或者 `woo` 的消息
-    3. `*` 和 `?` 通配符，前者匹配任意多个字符，后者匹配一个字符。注意：包含通配符的搜索会较慢 。
-    4. 更详细的语法介绍，参见 whoosh 的[文档](https://whoosh.readthedocs.io/en/latest/querylang.html)
+1. `"foo bar"` 搜索出现 `foo bar` 这个字符串的消息
+2. `AND`, `OR`, `NOT` 可以用来组合搜索逻辑，例如 `NOT foo AND (bar OR woo)` 搜索所有没有出现 `foo`，并且出现了 `bar` 或者 `woo` 的消息
+3. `*` 和 `?` 通配符，前者匹配任意多个字符，后者匹配一个字符。注意：包含通配符的搜索会较慢 。
+4. 更详细的语法介绍，参见 whoosh 的[文档](https://whoosh.readthedocs.io/en/latest/querylang.html)
 
 下面几条命令任何用户都可以使用：
 1. `/chats [keyword]`: 列出所有被索引的，标题中包含 `keyword` 的会话列表。如果没有指定 `keyword`，则返回所有的会话。bot 会返回一列按钮，点击一个按钮之后这条消息就对应了一个会话。之后给 bot 发送指令的时候如果回复了这条消息，bot 接下来进行的操作就会只操作这一个会话；如果是搜索指令，就会只在这个会话中进行搜索（如果指令支持对特定的会话进行操作的话）。
