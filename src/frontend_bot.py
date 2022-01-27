@@ -67,8 +67,8 @@ class BotFrontend:
         await self.bot.start(bot_token=self._cfg.bot_token)
         await self._register_commands()
         self._register_hooks()
-        await self.bot.send_message(self._cfg.admin_id, 'I am ready')
-        await self.bot.send_message(self._cfg.admin_id, await self.backend.get_stat(), parse_mode='html')
+        start_msg = 'bot 初始化完成\n\n' + await self.backend.get_stat()
+        await self.bot.send_message(self._cfg.admin_id, start_msg, parse_mode='html')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
@@ -90,7 +90,7 @@ class BotFrontend:
             elif data[0] == 'select_chat':
                 chat_id = int(data[1])
                 chat_name = await self.backend.translate_chat_id(chat_id)
-                await event.edit(f'Reply to this message to operate on {chat_name} ({chat_id})')
+                await event.edit(f'回复本条消息以对 {chat_name} ({chat_id}) 进行操作')
                 self._redis.set(f'select_chat:{event.chat_id}:{event.message_id}', chat_id)
             else:
                 raise RuntimeError(f'unknown callback data: {event.data}')
@@ -107,7 +107,7 @@ class BotFrontend:
         elif text.startswith('/random'):
             msg = self.backend.rand_msg()
             chat_name = await self.backend.translate_chat_id(msg.chat_id)
-            respond = f'Random message from <b>{chat_name} [{msg.post_time}]</b>\n'
+            respond = f'随机消息: <b>{chat_name} [{msg.post_time}]</b>\n'
             respond += f'{msg.url}\n'
             await event.respond(respond, parse_mode='html')
 
@@ -116,7 +116,7 @@ class BotFrontend:
             for chat_id in self.backend.indexed_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
-            await event.respond('Choose a chat', buttons=buttons)
+            await event.respond('选择一个聊天', buttons=buttons)
 
         elif text.startswith('/'):
             await event.respond(f'错误：未知命令 {text.split()[0]}')
@@ -151,7 +151,7 @@ class BotFrontend:
         elif text.startswith('/find_chat_id'):
             q = text[14:].strip()
             sb = []
-            msg = await event.reply("Processing...")
+            msg = await event.reply('处理中…')
             for chat_id in await self.backend.search_chat_id(q):
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')

@@ -6,7 +6,7 @@ from typing import Optional
 
 from telethon import TelegramClient, events
 
-from indexer import Indexer, IndexMsg, SearchResult
+from indexer import Indexer, IndexMsg
 from common import strip_content, get_share_id, get_logger, format_entity_name
 
 class BackendBotConfig:
@@ -93,15 +93,16 @@ class BackendBot:
 
     async def get_stat(self):
         sb = [
-            f'The status of backend "{self.id}"\n\n'
-            f'Total messages: <b>{self._indexer.ix.doc_count()}</b>\n\n'
-            f'{len(self.indexed_chats)} chats are being indexed: \n'
+            f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
+            f'总计 {len(self.indexed_chats)} 个对话被加入了索引：\n'
         ]  # string builder
         # TODO: print 'hidden' chats
         for chat_id, name in self._id_to_title_table.items():
             num = self._indexer.count(chat_id=chat_id)
             # TODO: handle PM URL
-            sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> {num} messages\n')
+            sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a>'
+                      f' ({chat_id}) '
+                      f'共 {num} 条消息\n')
         return ''.join(sb)
 
     def is_empty(self, chat_id=None):
