@@ -64,20 +64,20 @@ class BotFrontend:
         self.download_arg_parser.add_argument('--min', type=int)
         self.download_arg_parser.add_argument('--max', type=int)
         self.download_arg_parser.add_argument('chats', type=int, nargs='*')
+        
+        self.chat_ids_parser = ArgumentParser()
+        self.chat_ids_parser.add_argument('chats', type=int, nargs='*')
 
     async def start(self):
-        self._logger.info(f'init frontend bot {self.id}')
+        self._logger.info(f'Start init frontend bot')
         await self.bot.start(bot_token=self._cfg.bot_token)
+        self._logger.info(f'Bot account login ok')
         await self._register_commands()
+        self._logger.info(f'Register bot commands ok')
         self._register_hooks()
-        sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
-        chats_not_indexed = self.backend.indexed_chats_in_cfg - self.backend.indexed_chats
-        if len(chats_not_indexed) > 0:
-            sb.append(f'\n以下对话位于配置文件中但是未被索引，使用 /download_history 命令添加索引\n')
-            for chat_id in chats_not_indexed:
-                name = await self.backend.translate_chat_id(chat_id)
-                sb.append(f'- <a href="https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> ({chat_id})\n')
 
+        sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
+        # TODO: pass structured status message from backend
         await self.bot.send_message(self._cfg.admin_id, ''.join(sb), parse_mode='html')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
@@ -108,13 +108,14 @@ class BotFrontend:
 
     async def _normal_msg_handler(self, event: events.NewMessage.Event):
         text: str = event.message.message
-        self._logger.info(f'User {event.chat_id} Queries "{text}"')
+        self._logger.info(f'User {event.chat_id} sends "{text}"')
 
         if not (text and text.strip()) or text.startswith('/start'):
             # TODO: add help text
             return
 
         elif text.startswith('/random'):
+            # TODO: support random msg in a given chat
             msg = self.backend.rand_msg()
             chat_name = await self.backend.translate_chat_id(msg.chat_id)
             respond = f'随机消息: <b>{chat_name} [{msg.post_time}]</b>\n'
@@ -125,7 +126,7 @@ class BotFrontend:
             # TODO: support paging
             buttons = []
             kw = text[7:].strip()
-            for chat_id in self.backend.indexed_chats:
+            for chat_id in self.backend.monitored_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 if kw in chat_name:
                     buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
@@ -139,31 +140,49 @@ class BotFrontend:
 
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
         text: str = event.raw_text
-        self._logger.info(f'Admin {event.chat_id} searches "{text}"')
+        self._logger.info(f'Admin {event.chat_id} sends "{text}"')
         if text.startswith('/stat'):
             await event.respond(await self.backend.get_index_status(), parse_mode='html')
 
-        elif text.startswith('/download_history'):
+        elif text.startswith('/download_chat'):
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
             min_id = args.min or 1
             max_id = args.max or 1 << 31 - 1
-            chat_ids = args.chats or self._query_selected_chat(event) or self.backend.indexed_chats_in_cfg
+            chat_ids = args.chats or self._query_selected_chat(event) or self.backend.monitored_chats
             for chat_id in chat_ids:
+                self._logger.info(f'start downloading history of {chat_id} (min={min_id}, max={max_id})')
                 await self._download_history(chat_id, min_id, max_id)
+                self._logger.info(f'succeed downloading history of {chat_id} (min={min_id}, max={max_id})')
+
+        elif text.startswith('/track_chat'):
+            args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
+            chat_ids = args.chats or self._query_selected_chat(event)
+            if chat_ids:
+                for chat_id in chat_ids:
+                    self._logger.info(f'add {chat_id} to monitored_chat')
+                    self.backend.monitored_chats.add(chat_id)
+            else:
+                await event.reply(f'错误：请至少指定一个会话')
 
         elif text.startswith('/clear'):
-            chat_ids = self._query_selected_chat(event)
+            args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
+            chat_ids = args.chats or self._query_selected_chat(event)
+            self._logger.info(f'clear downloading history of chats {chat_ids}')
             self.backend.clear(chat_ids)
             if chat_ids:
                 for chat_id in chat_ids:
-                    await event.reply(f'{await self.backend.format_dialog_html(chat_id)} 的索引已清除')
+                    await event.reply(f'{await self.backend.format_dialog_html(chat_id)} 的索引已清除', parse_mode='html')
             else:
                 await event.reply('全部索引已清除')
 
         elif text.startswith('/find_chat_id'):
             q = text[14:].strip()
+            if len(q) == 0:
+                await event.reply('错误：关键词不能为空')
+                return
             sb = []
-            msg = await event.reply('处理中…')
+            # TODO: handle supergroup migration
+            msg = await event.reply(f'正在搜索所有标题中包含 "{q}" 的对话…')
             for chat_id in await self.backend.find_chat_id(q):
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
@@ -180,7 +199,7 @@ class BotFrontend:
         q = event.raw_text
         chats = self._query_selected_chat(event)
 
-        self._logger.info(f'search in chat {chats}')
+        self._logger.info(f'Search "{q}" in chats {chats}')
         result = self.backend.search(q, in_chats=chats, page_len=self._cfg.page_len, page_num=1)
 
         used_time = time() - start_time
@@ -194,20 +213,13 @@ class BotFrontend:
 
     async def _download_history(self, chat_id: int, min_id: int, max_id: int):
         admin_id = self._cfg.admin_id
-        chat_name = await self.backend.translate_chat_id(chat_id)
-
         chat_html = await self.backend.format_dialog_html(chat_id)
-        if chat_id not in self.backend.indexed_chats_in_cfg:
-            await self.bot.send_message(
-                admin_id,
-                f'警告: 重启后端 bot 之后，{chat_html} 的索引可能失效，'
-                f'请将 {chat_id} 加入配置文件',
-                parse_mode='html')
         if min_id == 1 and max_id == 1 << 31 - 1 and not self.backend.is_empty(chat_id):
+            # TODO: automatically handle message duplication
             await self.bot.send_message(
                 admin_id,
                 f'错误: {chat_html} 的索引非空，下载历史会导致索引重复消息，'
-                f'请先 /clear 清除索引，或者指定索引范围',
+                f'请先 /clear 清除索引，或者通过 --min, --max 参数指定索引范围',
                 parse_mode='html')
             return
         cnt: int = 0
@@ -226,10 +238,7 @@ class BotFrontend:
             cnt += 1
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
-        if prog_msg is None:
-            await self.bot.send_message(admin_id, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
-        else:
-            await self.bot.edit_message(prog_msg, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
+        await self.bot.send_message(admin_id, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())
@@ -274,11 +283,13 @@ class BotFrontend:
             exit(-1)
 
         admin_commands = [
-            BotCommand(command="download_history", description='[ START[ END]] 下载历史消息'),
+            BotCommand(command="download_chat", description='[--min=MIN] [--max=MAX] [CHAT_ID...] '
+                                                            '下载并索引会话的历史消息，并将其加入监听列表'),
+            BotCommand(command="monitor_chat", description='CHAT_ID... 将会话加入监听列表'),
             BotCommand(command="random", description='随机返回一条已索引消息'),
-            BotCommand(command="stat", description='索引状态'),
-            BotCommand(command="clear", description='清除索引'),
-            BotCommand(command="find_chat_id", description='获取聊天 id'),
+            BotCommand(command="stat", description='查询后端索引状态'),
+            BotCommand(command="clear", description='[CHAT_ID...] 清除索引'),
+            BotCommand(command="find_chat_id", description='KEYWORD 根据关键词获取聊天 id'),
             BotCommand(command="chats", description='选择聊天'),
         ]
         commands = [

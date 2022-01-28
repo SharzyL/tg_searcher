@@ -17,6 +17,8 @@ class IndexMsg:
     schema = Schema(
         content=TEXT(stored=True, analyzer=ChineseAnalyzer()),
         url=ID(stored=True, unique=True),
+        # for `chat_id` we are using TEXT instead of NUMERIC here, because NUMERIC
+        # do not support iterating all values of the field
         chat_id=TEXT(stored=True),
         post_time=DATETIME(stored=True, sortable=True),
     )
