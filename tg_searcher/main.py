@@ -8,7 +8,7 @@ import asyncio
 from telethon.client import TelegramClient
 
 from .frontend_bot import BotFrontend, BotFrontendConfig
-from .backend_bot import BackendBot
+from .backend_bot import BackendBot, BackendBotConfig
 from .common import CommonBotConfig
 
 
@@ -47,7 +47,8 @@ async def a_main():
     for backend_yaml in full_config['backends']:
         backend_id = backend_yaml['id']
         session_name = backend_yaml['use_session']
-        backend = BackendBot(common_config, sessions[session_name], args.clear, backend_id)
+        backend_config = BackendBotConfig(**backend_yaml.get('config', {}))
+        backend = BackendBot(common_config, backend_config, sessions[session_name], args.clear, backend_id)
         async_tasks.append(backend.start())
         if backend_id not in backends:
             backends[backend_id] = backend
@@ -57,7 +58,7 @@ async def a_main():
     for frontend_yaml in full_config['frontends']:
         backend_id = frontend_yaml['use_backend']
         frontend_id = frontend_yaml['id']
-        frontend_config = BotFrontendConfig(**frontend_yaml['config'])
+        frontend_config = BotFrontendConfig(**frontend_yaml.get('config', {}))
         frontend = BotFrontend(common_config, frontend_config,
                                frontend_id=frontend_id, backend=backends[backend_id])
         async_tasks.append(frontend.start())

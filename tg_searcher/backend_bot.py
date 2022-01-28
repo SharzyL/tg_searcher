@@ -7,11 +7,18 @@ from telethon import TelegramClient, events
 from .indexer import Indexer, IndexMsg
 from .common import CommonBotConfig, strip_content, get_share_id, get_logger, format_entity_name
 
+class BackendBotConfig:
+    def __init__(self, **kw):
+        self.monitor_all = kw.get('monitor_all', False)
+        self.excluded_chats: Set[int] = set(get_share_id(chat_id)
+                                            for chat_id in kw.get('exclude_chats', []))
+
 class BackendBot:
-    def __init__(self, common_cfg: CommonBotConfig, client: TelegramClient, clean_db: bool, backend_id: str):
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, client: TelegramClient, clean_db: bool, backend_id: str):
         self.id: str = backend_id
         self.client = client
 
+        self._cfg = cfg
         self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._logger = get_logger(f'bot-backend:{backend_id}')
         self._id_to_title_table: Dict[int, str] = dict()
@@ -80,12 +87,17 @@ class BackendBot:
         # TODO: add session and frontend name
         sb = [  # string builder
             f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
-            f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n'
         ]
-        for chat_id, name in self._id_to_title_table.items():
-            num = self._indexer.count_by_query(chat_id=str(chat_id))
-            sb.append(f'- {await self.format_dialog_html(chat_id)} '
-                      f'共 {num} 条消息\n')
+        if self._cfg.monitor_all:
+            sb.append(f'如下 {len(self._cfg.excluded_chats)} 个对话没有被加入索引')
+            for chat_id in self._cfg.excluded_chats:
+                sb.append(f'- {await self.format_dialog_html(chat_id)}\n')
+        else:
+            for chat_id in self.monitored_chats:
+                sb.append(f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n')
+                num = self._indexer.count_by_query(chat_id=str(chat_id))
+                sb.append(f'- {await self.format_dialog_html(chat_id)} '
+                          f'共 {num} 条消息\n')
         return ''.join(sb)
 
     async def translate_chat_id(self, chat_id: int):
@@ -99,10 +111,17 @@ class BackendBot:
         name = await self.translate_chat_id(chat_id)
         return f'<a href = "https://t.me/c/{chat_id}/99999999">{html.escape(name)}</a> ({chat_id})'
 
+    def _should_monitor(self, chat_id: int):
+        # tell if a chat should be monitored
+        if self._cfg.monitor_all:
+            return chat_id not in self._cfg.excluded_chats
+        else:
+            return chat_id in self.monitored_chats
+
     def _register_hooks(self):
         @self.client.on(events.NewMessage())
         async def client_message_handler(event: events.NewMessage.Event):
-            if event.chat_id in self.monitored_chats and event.raw_text and len(event.raw_text.strip()) >= 0:
+            if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
                 url = f'https://t.me/c/{share_id}/{event.id}'
                 self._logger.info(f'New message {url}')
@@ -116,7 +135,7 @@ class BackendBot:
 
         @self.client.on(events.MessageEdited())
         async def client_message_update_handler(event: events.MessageEdited.Event):
-            if event.chat_id in self.monitored_chats and event.raw_text and len(event.raw_text.strip()) >= 0:
+            if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
                 url = f'https://t.me/c/{share_id}/{event.id}'
                 self._logger.info(f'Update message {url}')
@@ -125,7 +144,7 @@ class BackendBot:
         @self.client.on(events.MessageDeleted())
         async def client_message_delete_handler(event: events.MessageDeleted.Event):
             share_id = get_share_id(event.chat_id)
-            if event.chat_id and event.chat_id in self.monitored_chats:
+            if event.chat_id and self._should_monitor(event.chat_id):
                 for msg_id in event.deleted_ids:
                     url = f'https://t.me/c/{share_id}/{msg_id}'
                     self._logger.info(f'Delete message {url}')
