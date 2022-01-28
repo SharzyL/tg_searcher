@@ -115,7 +115,6 @@ class BotFrontend:
         self._logger.info(f'User {event.chat_id} sends "{text}"')
 
         if not (text and text.strip()) or text.startswith('/start'):
-            # TODO: add help text
             return
 
         elif text.startswith('/random'):
@@ -143,6 +142,7 @@ class BotFrontend:
             await self._search(event)
 
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
+        # TODO: support passing username as command parameter
         text: str = event.raw_text
         self._logger.info(f'Admin {event.chat_id} sends "{text}"')
         if text.startswith('/stat'):
@@ -185,7 +185,6 @@ class BotFrontend:
                 await event.reply('错误：关键词不能为空')
                 return
             sb = []
-            # TODO: handle supergroup migration
             msg = await event.reply(f'正在搜索所有标题中包含 "{q}" 的对话…')
             chat_ids = await self.backend.find_chat_id(q)
             for chat_id in chat_ids[0:50]:  # avoid too many chats included
