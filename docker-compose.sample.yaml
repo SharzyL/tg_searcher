@@ -1,8 +1,9 @@
 # Note: your config file `searcher.yaml` must be placed under `./config/` .
-# `redis host` must be set to `redis` .
+# `redis` must be set to `redis:6379` .
 # `runtime_dir` must be set to `/app/config/tg_searcher_data` .
+
 # 注意：配置文件 `searcher.yaml` 必须放在 `./config/` 下面。
-# `redis host` 必须设置为 `redis` 。
+# `redis` 必须设置为 `redis:6379` 。
 # `runtime_dir` 必须设置为 `/app/config/tg_searcher_data` 。
 
 version: '3'

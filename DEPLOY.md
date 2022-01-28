@@ -22,6 +22,8 @@ python3 -m pip install -U tg-searcher
 
 参考 README 填写配置文件，运行 `python3 -m tg_searcher -f /path/to/config.yaml` 即可。如果 pip 安装可执行文件的目录在 `PATH` 里面，也可以直接 `tg-searcher -f /path/to/config.yaml`。
 
+Tip: `cryptg` 是一个用 C 编写的密码学库，是 telethon 的可选依赖，`cryptg` 能提升 telethon 处理请求的性能，用户可以用 pip 自行安装（`python -m pip install cryptg`），但是需要确保设备上有适当的 C 编译器来编译二进制库。
+
 首次运行时需要填写验证码（如果设置了两步验证，还需填写密码）。运行成功后 bot 会在 Telegram 中向管理员发送一条包含服务器状态的消息。
 
 ## Docker Compose

@@ -1,7 +1,0 @@
-telethon~=1.24.0
-cryptg
-whoosh~=2.7.4
-python-socks[asyncio]
-jieba
-pyyaml
-redis
