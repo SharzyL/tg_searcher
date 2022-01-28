@@ -5,6 +5,7 @@ from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
 
+import whoosh.index
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import Message as TgMessage, \
     BotCommand, BotCommandScopePeer, BotCommandScopeDefault
@@ -253,14 +254,16 @@ class BotFrontend:
             if event.chat_id != self._cfg.admin_id:
                 try:
                     await self._normal_msg_handler(event)
+                except whoosh.index.LockError:
+                    event.reply(f'当前索引正在被写入，请等待现有写入操作完成')
                 except Exception as e:
-                    event.reply(f'Error occurs: {e}\n\nPlease contact the admin for fix')
+                    event.reply(f'错误: {e}\n\n请联系管理员修复')
                     raise e
             else:
                 try:
                     await self._admin_msg_handler(event)
                 except Exception as e:
-                    await event.reply(f'Error occurs:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
+                    await event.reply(f'错误:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                     raise e
 
     def _query_selected_chat(self, event: events.NewMessage.Event) -> Optional[List[int]]:
