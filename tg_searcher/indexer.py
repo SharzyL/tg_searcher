@@ -21,13 +21,15 @@ class IndexMsg:
         # do not support iterating all values of the field
         chat_id=TEXT(stored=True),
         post_time=DATETIME(stored=True, sortable=True),
+        sender=TEXT(stored=True),
     )
 
-    def __init__(self, content: str, url: str, chat_id: Union[int, str], post_time: datetime):
+    def __init__(self, content: str, url: str, chat_id: Union[int, str], post_time: datetime, sender: str):
         self.content = content
         self.url = url
         self.chat_id = int(chat_id)
         self.post_time = post_time
+        self.sender = sender
 
     def as_dict(self):
         return {
@@ -35,6 +37,7 @@ class IndexMsg:
             'url': self.url,
             'chat_id': str(self.chat_id),
             'post_time': self.post_time,
+            'sender': self.sender
         }
 
     def __str__(self):

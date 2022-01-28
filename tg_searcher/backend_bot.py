@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Optional, Union, Iterable, List, Set, Dict
 
 from telethon import TelegramClient, events
+from telethon.tl.patched import Message as TgMessage
+from telethon.tl.types import User
 
 from .indexer import Indexer, IndexMsg
 from .common import CommonBotConfig, strip_content, get_share_id, get_logger, format_entity_name
@@ -25,6 +27,7 @@ class BackendBot:
 
         # on startup, all indexed chats are added to monitor list
         self.monitored_chats: Set[int] = self._indexer.list_indexed_chats()
+        self.excluded_chats = cfg.excluded_chats
 
     async def start(self):
         self._logger.info(f'Init backend bot {self.id}')
@@ -58,11 +61,13 @@ class BackendBot:
             if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
                 share_id = get_share_id(chat_id)
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
+                sender = await self._get_sender_name(tg_message)
                 msg = IndexMsg(
                     content=strip_content(tg_message.raw_text),
                     url=url,
                     chat_id=chat_id,
-                    post_time=datetime.fromtimestamp(tg_message.date.timestamp())
+                    post_time=datetime.fromtimestamp(tg_message.date.timestamp()),
+                    sender=sender,
                 )
                 self._indexer.add_document(msg, writer)
                 await call_back(tg_message.id)
@@ -78,7 +83,7 @@ class BackendBot:
 
     async def find_chat_id(self, q: str) -> List[int]:
         chat_ids = []
-        async for dialog in self.client.iter_dialogs():
+        async for dialog in self.client.iter_dialogs(ignore_migrated=True):
             if q.lower() in dialog.name.lower():
                 chat_ids.append(dialog.entity.id)
         return chat_ids
@@ -89,15 +94,23 @@ class BackendBot:
             f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
         ]
         if self._cfg.monitor_all:
-            sb.append(f'如下 {len(self._cfg.excluded_chats)} 个对话没有被加入索引')
-            for chat_id in self._cfg.excluded_chats:
+            sb.append(f'{len(self.excluded_chats)} 个对话被禁止索引\n')
+            for chat_id in self.excluded_chats:
                 sb.append(f'- {await self.format_dialog_html(chat_id)}\n')
-        else:
-            for chat_id in self.monitored_chats:
-                sb.append(f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n')
-                num = self._indexer.count_by_query(chat_id=str(chat_id))
-                sb.append(f'- {await self.format_dialog_html(chat_id)} '
-                          f'共 {num} 条消息\n')
+            sb.append('\n')
+
+        sb.append(f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n')
+        print_limit = 100  # since telegram can send at most 4096 chars per msg
+        for chat_id in self.monitored_chats:
+            if print_limit > 0:
+                print_limit -= 1
+            else:
+                break
+            num = self._indexer.count_by_query(chat_id=str(chat_id))
+            sb.append(f'- {await self.format_dialog_html(chat_id)} '
+                      f'共 {num} 条消息\n')
+        if print_limit == 0:
+            sb.append(f'\n由于 Telegram 的消息长度限制，最多只显示 100 个对话')
         return ''.join(sb)
 
     async def translate_chat_id(self, chat_id: int):
@@ -114,22 +127,32 @@ class BackendBot:
     def _should_monitor(self, chat_id: int):
         # tell if a chat should be monitored
         if self._cfg.monitor_all:
-            return chat_id not in self._cfg.excluded_chats
+            return chat_id not in self.excluded_chats
         else:
             return chat_id in self.monitored_chats
+
+    async def _get_sender_name(self, message: TgMessage) -> str:
+        # empty string will be returned if no sender
+        sender = await message.get_sender()
+        if isinstance(sender, User):
+            return format_entity_name(sender)
+        else:
+            return ''
 
     def _register_hooks(self):
         @self.client.on(events.NewMessage())
         async def client_message_handler(event: events.NewMessage.Event):
             if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
+                sender = await self._get_sender_name(event.message)
                 url = f'https://t.me/c/{share_id}/{event.id}'
-                self._logger.info(f'New message {url}')
+                self._logger.info(f'New message {url} from "{sender}"')
                 msg = IndexMsg(
                     content=strip_content(event.raw_text),
                     url=url,
                     chat_id=share_id,
                     post_time=datetime.fromtimestamp(event.date.timestamp()),
+                    sender=sender
                 )
                 self._indexer.add_document(msg)
 

@@ -39,9 +39,9 @@ class BotFrontendConfig:
 class BotFrontend:
     """
     Redis data protocol:
-    - query_text:{bot_chat_id}:{msg_id} => query text corresponding to a search result
-    - query_chats:{bot_chat_id}:{msg_id} => chat filter corresponding to a search result
-    - select_chat:{bot_chat_id}:{msg_id} => the chat_id selected
+    - {frontend_id}:query_text:{bot_chat_id}:{msg_id} => query text corresponding to a search result
+    - {frontend_id}:query_chats:{bot_chat_id}:{msg_id} => chat filter corresponding to a search result
+    - {frontend_id}:select_chat:{bot_chat_id}:{msg_id} => the chat_id selected
 
     Button data protocol:
     - select_chat={chat_id}
@@ -77,6 +77,9 @@ class BotFrontend:
         self._logger.info(f'Register bot commands ok')
         self._register_hooks()
 
+        # prevent chat with bot being indexed
+        self.backend.excluded_chats.add((await self.bot.get_me()).id)
+
         sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
         # TODO: pass structured status message from backend
         await self.bot.send_message(self._cfg.admin_id, ''.join(sb), parse_mode='html')
@@ -87,8 +90,8 @@ class BotFrontend:
             data = event.data.decode('utf-8').split('=')
             if data[0] == 'search_page':
                 page_num = int(data[1])
-                q = self._redis.get(f'query_text:{event.chat_id}:{event.message_id}')
-                chats = self._redis.get(f'query_chats:{event.chat_id}:{event.message_id}')
+                q = self._redis.get(f'{self.id}:query_text:{event.chat_id}:{event.message_id}')
+                chats = self._redis.get(f'{self.id}:query_chats:{event.chat_id}:{event.message_id}')
                 chats = chats and [int(chat_id) for chat_id in chats.split(',')]
                 self._logger.info(f'Query [{q}] (chats={chats}) turned to page {page_num}')
                 if q:
@@ -102,7 +105,7 @@ class BotFrontend:
                 chat_id = int(data[1])
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 await event.edit(f'回复本条消息以对 {chat_name} ({chat_id}) 进行操作')
-                self._redis.set(f'select_chat:{event.chat_id}:{event.message_id}', chat_id)
+                self._redis.set(f'{self.id}:select_chat:{event.chat_id}:{event.message_id}', chat_id)
             else:
                 raise RuntimeError(f'unknown callback data: {event.data}')
         await event.answer()
@@ -209,9 +212,9 @@ class BotFrontend:
         buttons = self._render_respond_buttons(result, 1)
         msg: TgMessage = await event.respond(respond, parse_mode='html', buttons=buttons)
 
-        self._redis.set(f'query_text:{event.chat_id}:{msg.id}', q)
+        self._redis.set(f'{self.id}:query_text:{event.chat_id}:{msg.id}', q)
         if chats:
-            self._redis.set(f'query_chats:{event.chat_id}:{msg.id}', ','.join(map(str, chats)))
+            self._redis.set(f'{self.id}:query_chats:{event.chat_id}:{msg.id}', ','.join(map(str, chats)))
 
     async def _download_history(self, chat_id: int, min_id: int, max_id: int):
         admin_id = self._cfg.admin_id
@@ -271,7 +274,7 @@ class BotFrontend:
         msg: TgMessage = event.message
         if msg.reply_to:
             return [int(self._redis.get(
-                f'select_chat:{event.chat_id}:{msg.reply_to.reply_to_msg_id}'
+                f'{self.id}:select_chat:{event.chat_id}:{msg.reply_to.reply_to_msg_id}'
             ))]
         else:
             return None
@@ -319,7 +322,10 @@ class BotFrontend:
         string_builder = [f'共搜索到 {result.total_results} 个结果，用时 {used_time: .3} 秒：\n\n']
         for hit in result.hits:
             chat_title = await self.backend.translate_chat_id(hit.msg.chat_id)
-            string_builder.append(f'<b>{chat_title} [{hit.msg.post_time}]</b>\n')
+            if len(hit.msg.sender) > 0:
+                string_builder.append(f'<b>{chat_title} (<u>{hit.msg.sender}</u>) [{hit.msg.post_time}]</b>\n')
+            else:
+                string_builder.append(f'<b>{chat_title} [{hit.msg.post_time}]</b>\n')
             string_builder.append(f'<a href="{hit.msg.url}">{hit.highlighted}</a>\n')
         return ''.join(string_builder)
 
