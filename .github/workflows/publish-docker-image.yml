@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - master
+      - ci-test
+
 jobs:
   push_to_docker_hub:
     name: Push Docker image to Docker Hub
