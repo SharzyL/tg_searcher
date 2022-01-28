@@ -1,4 +1,6 @@
 FROM python:3.9 AS BUILDER
+# Because cryptg builds some native library
+# use multi-stage build reduce image size
 
 WORKDIR /app
 
