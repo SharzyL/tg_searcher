@@ -36,15 +36,14 @@ sessions:
 backends:
   - id: public              # 用来标识后端的名称，在配置文件中唯一即可
     use_session: alice      # 后端所使用的 session 的名称
-    config:
-      indexed_chats:        # 默认加入索引的会话 id 列表
-        - 1639873385        # 这个列表可以留空
-        - 1332829774        # bot 启动之后通过 /find_chat_id 命令可以找到想要索引的会话的 id
 
   - id: personal
     use_session: alice
     config:
-      indexed_chats: []
+      monitor_all: true     # 当启用这一选项的时候，所有的会话均会被监听，新消息全部会被加入索引
+      excluded_chats:       # 当 monitor_all 选项启用的时候，这个列表里的会话不会被监听
+        - 342843148
+        - 857204339
 
 frontends:
   - type: bot               # 目前只支持 bot 类型的前端
