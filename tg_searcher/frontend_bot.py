@@ -184,7 +184,8 @@ class BotFrontend:
             sb = []
             # TODO: handle supergroup migration
             msg = await event.reply(f'正在搜索所有标题中包含 "{q}" 的对话…')
-            for chat_id in await self.backend.find_chat_id(q):
+            chat_ids = await self.backend.find_chat_id(q)
+            for chat_id in chat_ids[0:50]:  # avoid too many chats included
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
             await self.bot.edit_message(msg, ''.join(sb), parse_mode='html')

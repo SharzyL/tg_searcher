@@ -79,7 +79,7 @@ class BackendBot:
     async def find_chat_id(self, q: str) -> List[int]:
         chat_ids = []
         async for dialog in self.client.iter_dialogs():
-            if q in dialog.name:
+            if q.lower() in dialog.name.lower():
                 chat_ids.append(dialog.entity.id)
         return chat_ids
 

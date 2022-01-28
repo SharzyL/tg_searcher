@@ -120,9 +120,10 @@ class Indexer:
     def update(self, content: str, url: str):
         with self.ix.searcher() as searcher:
             msg_dict = searcher.document(url=url)
-        with self.ix.writer() as writer:
-            msg_dict['content'] = content
-            writer.update_document(**msg_dict)
+            if msg_dict:
+                with self.ix.writer() as writer:
+                    msg_dict['content'] = content
+                    writer.update_document(**msg_dict)
 
     def clear(self):
         self._clear()
