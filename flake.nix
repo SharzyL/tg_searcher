@@ -15,8 +15,13 @@
       in
         {
           devShell = pkgs.mkShell {
-            buildInputs = [ searcher-pkg ];
+            buildInputs = [ 
+              searcher-pkg
+              pkgs.python3.pkgs.venvShellHook
+            ];
+            venvDir = "./venv";
           };
+
           defaultPackage = searcher-pkg;
         }
       );

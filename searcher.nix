@@ -1,5 +1,3 @@
-# experimental nix packaging
-
 { pkgs ? import <nixpkgs> {} }:
 
 with pkgs.python3.pkgs;
@@ -20,10 +18,7 @@ in
 buildPythonApplication rec {
   version = "0.1.2";
   pname = "tg-searcher";
-  src = fetchPypi {
-    inherit pname version;
-    sha256 = "sha256-s4u5c2l9nWMw6ypBGVamRaqp/7k8a0b8NOsUihtWP70=";
-  };
+  src = ./.;
   propagatedBuildInputs = with pkgs.python3.pkgs; [
     whoosh telethon jieba python-socks pyyaml redis cryptg
   ];
