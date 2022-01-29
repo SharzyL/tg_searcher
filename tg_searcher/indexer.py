@@ -13,7 +13,6 @@ from jieba.analyse.analyzer import ChineseAnalyzer
 
 
 class IndexMsg:
-    # TODO: add sender to Message schema
     schema = Schema(
         content=TEXT(stored=True, analyzer=ChineseAnalyzer()),
         url=ID(stored=True, unique=True),
