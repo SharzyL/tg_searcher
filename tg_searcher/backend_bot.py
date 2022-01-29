@@ -16,13 +16,16 @@ class BackendBotConfig:
                                             for chat_id in kw.get('exclude_chats', []))
 
 class BackendBot:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig, client: TelegramClient, clean_db: bool, backend_id: str):
+    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig,
+                 client: TelegramClient, clean_db: bool, backend_id: str):
         self.id: str = backend_id
         self.client = client
 
-        self._cfg = cfg
-        self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._logger = get_logger(f'bot-backend:{backend_id}')
+        self._cfg = cfg
+        if clean_db:
+            self._logger.info(f'Index will be cleaned')
+        self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
         self._id_to_title_table: Dict[int, str] = dict()
 
         # on startup, all indexed chats are added to monitor list

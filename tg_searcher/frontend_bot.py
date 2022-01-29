@@ -5,6 +5,7 @@ from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
 
+import redis
 import whoosh.index
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import Message as TgMessage, \
@@ -70,6 +71,12 @@ class BotFrontend:
         self.chat_ids_parser.add_argument('chats', type=int, nargs='*')
 
     async def start(self):
+        try:
+            self._redis.ping()
+        except redis.exceptions.ConnectionError as e:
+            self._logger.critical(f'Cannot connect to redis server {self._cfg.redis_host}: {e}')
+            raise e
+
         self._logger.info(f'Start init frontend bot')
         await self.bot.start(bot_token=self._cfg.bot_token)
         self._logger.info(f'Bot account login ok')
