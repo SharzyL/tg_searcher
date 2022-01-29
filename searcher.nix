@@ -2,11 +2,12 @@
 
 { pkgs ? import <nixpkgs> {} }:
 
+with pkgs.python3.pkgs;
 let
-cryptg = pkgs.python3.pkgs.buildPythonPackage rec {
+cryptg = buildPythonPackage rec {
   version = "0.2.post4";
   pname = "cryptg";
-  src = pkgs.python3.pkgs.fetchPypi {
+  src = fetchPypi {
     inherit pname version;
     sha256 = "sha256-pN4XMMpWqoqUXxdsJVhpAe1enxX/twxkWe7fRm62KZs=";
   };
@@ -15,10 +16,11 @@ cryptg = pkgs.python3.pkgs.buildPythonPackage rec {
   ];
 };
 
-searcher = pkgs.python3.pkgs.buildPythonApplication rec {
+in
+buildPythonApplication rec {
   version = "0.1.2";
   pname = "tg-searcher";
-  src = pkgs.python3.pkgs.fetchPypi {
+  src = fetchPypi {
     inherit pname version;
     sha256 = "sha256-s4u5c2l9nWMw6ypBGVamRaqp/7k8a0b8NOsUihtWP70=";
   };
@@ -26,11 +28,5 @@ searcher = pkgs.python3.pkgs.buildPythonApplication rec {
     whoosh telethon jieba python-socks pyyaml redis cryptg
   ];
   doCheck = false;
-};
-
-in
-pkgs.dockerTools.buildLayeredImage {
-  name = "searcher";
-  tag = "latest";
-  contents = [searcher];
 }
+
