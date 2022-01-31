@@ -33,9 +33,12 @@ class BackendBot:
         self.excluded_chats = cfg.excluded_chats
 
     async def start(self):
-        self._logger.info(f'Init backend bot {self.id}')
+        self._logger.info(f'Init backend bot')
 
-        await self.client.get_dialogs()  # fill in entity cache, to make sure that dialogs can be found by id
+        self._logger.info(f'Start iterating dialogs')
+        async for dialog in self.client.iter_dialogs(ignore_migrated=True):
+            self._id_to_title_table[dialog.entity.id] = dialog.name
+        self._logger.info(f'End iterating dialogs, {len(self._id_to_title_table)} dialogs in total')
         for chat_id in self.monitored_chats:
             chat_name = await self.translate_chat_id(chat_id)
             self._logger.info(f'Ready to monitor "{chat_name}" ({chat_id})')
@@ -86,9 +89,9 @@ class BackendBot:
 
     async def find_chat_id(self, q: str) -> List[int]:
         chat_ids = []
-        async for dialog in self.client.iter_dialogs(ignore_migrated=True):
-            if q.lower() in dialog.name.lower():
-                chat_ids.append(dialog.entity.id)
+        for chat_id, chat_name in self._id_to_title_table.items():
+            if q.lower() in chat_name.lower():
+                chat_ids.append(chat_id)
         return chat_ids
 
     async def get_index_status(self):
