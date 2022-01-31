@@ -18,14 +18,14 @@ Searcher 使用 YAML 作为配置文件的格式，默认的配置文件位于 `
 ```yaml
 common:
   # 当前 Searcher 实例的名称，防止部署多个实例的时候文件冲突
-  name: sharzy_test 
-  
+  name: sharzy_test
+
   # 运行时存储索引文件、session 文件等的位置，多个实例可以使用相同的位置
-  runtime_dir: /var/lib/tg_searcher  
+  runtime_dir: /var/lib/tg_searcher
 
   # 用于访问 Telegram 的代理，支持 socks5 和 http 协议，如不需要可以去掉该行
   proxy: socks5://localhost:1080
-  
+
   api_id: 1234567
   api_hash: 17a89121c4347182b112e15c1517a998
 
