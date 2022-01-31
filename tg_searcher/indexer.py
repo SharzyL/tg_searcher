@@ -80,6 +80,11 @@ class Indexer:
             if index.exists_in(index_dir, index_name) \
             else index.create_in(index_dir, IndexMsg.schema, index_name)
 
+        assert repr(self.ix.schema.names) == repr(IndexMsg.schema.names), \
+            f"Incompatible schema in your index '{index_dir}'\n" \
+            f"\tExpected: {IndexMsg.schema}\n" \
+            f"\tOn disk:  {self.ix.schema}"
+
         self._clear = _clear  # use closure to avoid introducing too much members
         self.query_parser = QueryParser('content', IndexMsg.schema)
         self.highlighter = highlight.Highlighter()
