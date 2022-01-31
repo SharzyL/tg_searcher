@@ -4,7 +4,7 @@ import pathlib
 here = pathlib.Path(__file__).parent.resolve()
 long_description = (here / 'README.md').read_text(encoding='utf-8')
 
-__version__ = '0.1.2'
+__version__ = '0.2.0'
 
 setup(
     name='tg-searcher',
