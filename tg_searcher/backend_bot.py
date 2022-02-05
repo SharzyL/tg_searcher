@@ -1,13 +1,14 @@
 import html
 from datetime import datetime
-from typing import Optional, Union, Iterable, List, Set, Dict
+from typing import Optional, List, Set
 
-from telethon import TelegramClient, events
+from telethon import events
 from telethon.tl.patched import Message as TgMessage
 from telethon.tl.types import User
 
 from .indexer import Indexer, IndexMsg
 from .common import CommonBotConfig, strip_content, get_share_id, get_logger, format_entity_name
+from .session import ClientSession
 
 class BackendBotConfig:
     def __init__(self, **kw):
@@ -17,16 +18,15 @@ class BackendBotConfig:
 
 class BackendBot:
     def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig,
-                 client: TelegramClient, clean_db: bool, backend_id: str):
+                 session: ClientSession, clean_db: bool, backend_id: str):
         self.id: str = backend_id
-        self.client = client
+        self.session = session
 
         self._logger = get_logger(f'bot-backend:{backend_id}')
         self._cfg = cfg
         if clean_db:
             self._logger.info(f'Index will be cleaned')
         self._indexer: Indexer = Indexer(common_cfg.index_dir / backend_id, clean_db)
-        self._id_to_title_table: Dict[int, str] = dict()
 
         # on startup, all indexed chats are added to monitor list
         self.monitored_chats: Set[int] = self._indexer.list_indexed_chats()
@@ -35,10 +35,6 @@ class BackendBot:
     async def start(self):
         self._logger.info(f'Init backend bot')
 
-        self._logger.info(f'Start iterating dialogs')
-        async for dialog in self.client.iter_dialogs(ignore_migrated=True):
-            self._id_to_title_table[dialog.entity.id] = dialog.name
-        self._logger.info(f'End iterating dialogs, {len(self._id_to_title_table)} dialogs in total')
         for chat_id in self.monitored_chats:
             chat_name = await self.translate_chat_id(chat_id)
             self._logger.info(f'Ready to monitor "{chat_name}" ({chat_id})')
@@ -63,7 +59,7 @@ class BackendBot:
         self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
         if chat_id not in self.monitored_chats:
             self.monitored_chats.add(chat_id)
-        async for tg_message in self.client.iter_messages(chat_id, min_id=min_id, max_id=max_id):
+        async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id):
             if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
                 share_id = get_share_id(chat_id)
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
@@ -88,16 +84,12 @@ class BackendBot:
             self._indexer.clear()
 
     async def find_chat_id(self, q: str) -> List[int]:
-        chat_ids = []
-        for chat_id, chat_name in self._id_to_title_table.items():
-            if q.lower() in chat_name.lower():
-                chat_ids.append(chat_id)
-        return chat_ids
+        return await self.session.find_chat_id(q)
 
     async def get_index_status(self):
         # TODO: add session and frontend name
         sb = [  # string builder
-            f'后端 "{self.id}" 总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
+            f'后端 "{self.id}"（session: "{self.session.name}"）总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
         ]
         if self._cfg.monitor_all:
             sb.append(f'{len(self.excluded_chats)} 个对话被禁止索引\n')
@@ -119,11 +111,8 @@ class BackendBot:
             sb.append(f'\n由于 Telegram 的消息长度限制，最多只显示 100 个对话')
         return ''.join(sb)
 
-    async def translate_chat_id(self, chat_id: int):
-        if chat_id not in self._id_to_title_table:
-            entity = await self.client.get_entity(await self.client.get_input_entity(chat_id))
-            self._id_to_title_table[chat_id] = format_entity_name(entity)
-        return self._id_to_title_table[chat_id]
+    async def translate_chat_id(self, chat_id: int) -> str:
+        return await self.session.translate_chat_id(chat_id)
 
     async def format_dialog_html(self, chat_id: int):
         # TODO: handle PM URL
@@ -137,7 +126,8 @@ class BackendBot:
         else:
             return chat_id in self.monitored_chats
 
-    async def _get_sender_name(self, message: TgMessage) -> str:
+    @staticmethod
+    async def _get_sender_name(message: TgMessage) -> str:
         # empty string will be returned if no sender
         sender = await message.get_sender()
         if isinstance(sender, User):
@@ -146,7 +136,7 @@ class BackendBot:
             return ''
 
     def _register_hooks(self):
-        @self.client.on(events.NewMessage())
+        @self.session.on(events.NewMessage())
         async def client_message_handler(event: events.NewMessage.Event):
             if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
@@ -162,7 +152,7 @@ class BackendBot:
                 )
                 self._indexer.add_document(msg)
 
-        @self.client.on(events.MessageEdited())
+        @self.session.on(events.MessageEdited())
         async def client_message_update_handler(event: events.MessageEdited.Event):
             if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
                 share_id = get_share_id(event.chat_id)
@@ -170,7 +160,7 @@ class BackendBot:
                 self._logger.info(f'Update message {url}')
                 self._indexer.update(url=url, content=strip_content(event.raw_text))
 
-        @self.client.on(events.MessageDeleted())
+        @self.session.on(events.MessageDeleted())
         async def client_message_delete_handler(event: events.MessageDeleted.Event):
             share_id = get_share_id(event.chat_id)
             if event.chat_id and self._should_monitor(event.chat_id):

@@ -128,3 +128,4 @@ Telegram Bot 的前端提供了如下功能：
 3. `/stat`: 报告后端的状态
 4. `/clear [CHAT_ID...]`: 清除后端的所有索引，或者清除某个特定会话的索引
 5. `/find_chat_id KEYWORD`: 列出所有后端的账号的所有会话中包含 `keyword` 的会话以及对应的 id
+6. `/refresh_chat_names`: 刷新会话 id 和会话名称之间映射的缓存
