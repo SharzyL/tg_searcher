@@ -150,7 +150,7 @@ class BotFrontend:
 
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
         # TODO: support passing username as command parameter
-        text: str = event.raw_text
+        text: str = event.raw_text.strip()
         self._logger.info(f'Admin {event.chat_id} sends "{text}"')
         if text.startswith('/stat'):
             await event.respond(await self.backend.get_index_status(), parse_mode='html')

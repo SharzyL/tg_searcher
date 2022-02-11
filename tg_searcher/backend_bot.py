@@ -1,6 +1,6 @@
 import html
 from datetime import datetime
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Dict
 
 from telethon import events
 from telethon.tl.patched import Message as TgMessage
@@ -31,6 +31,7 @@ class BackendBot:
         # on startup, all indexed chats are added to monitor list
         self.monitored_chats: Set[int] = self._indexer.list_indexed_chats()
         self.excluded_chats = cfg.excluded_chats
+        self.newest_msg: Dict[int, IndexMsg] = dict()
 
     async def start(self):
         self._logger.info(f'Init backend bot')
@@ -56,11 +57,11 @@ class BackendBot:
 
     async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
         writer = self._indexer.ix.writer()
-        self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
-        self.monitored_chats.add(chat_id)
-        async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id):
+        share_id = get_share_id(chat_id)
+        self._logger.info(f'Downloading history from {share_id} ({min_id=}, {max_id=})')
+        self.monitored_chats.add(share_id)
+        async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id, reverse=True):
             if msg_text := self._extract_text(tg_message):
-                share_id = get_share_id(chat_id)
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
                 sender = await self._get_sender_name(tg_message)
                 msg = IndexMsg(
@@ -71,6 +72,7 @@ class BackendBot:
                     sender=sender,
                 )
                 self._indexer.add_document(msg, writer)
+                self.newest_msg[share_id] = msg
                 await call_back(tg_message.id)
         writer.commit()
 
@@ -106,6 +108,8 @@ class BackendBot:
             num = self._indexer.count_by_query(chat_id=str(chat_id))
             sb.append(f'- {await self.format_dialog_html(chat_id)} '
                       f'共 {num} 条消息\n')
+            if newest_msg := self.newest_msg.get(chat_id, None):
+                sb.append(f'  最新消息：<a href="{newest_msg.url}">{brief_content(newest_msg.content)}</a>')
         if print_limit == 0:
             sb.append(f'\n由于 Telegram 的消息长度限制，最多只显示 100 个对话')
         return ''.join(sb)
@@ -157,6 +161,7 @@ class BackendBot:
                     post_time=datetime.fromtimestamp(event.date.timestamp()),
                     sender=sender
                 )
+                self.newest_msg[share_id] = msg
                 self._indexer.add_document(msg)
 
         @self.session.on(events.MessageEdited())
