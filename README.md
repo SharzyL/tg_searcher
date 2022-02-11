@@ -93,6 +93,7 @@ frontends:
     use_backend: priv_idx
     config:
       admin_id: 619376577
+      # 不同前端应该使用不同的 bot_token
       bot_token: 2203317382:BkF390ab92kcb1b2ii2b4-1sbc39i20bb12
       # 如果开启了 private_mode，那么只有 private_whitelist 里的用户才能使用 bot
       # 管理员默认位于 private_whitelist 中，无需额外添加
