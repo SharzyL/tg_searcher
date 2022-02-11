@@ -15,8 +15,14 @@ def ensure_path_exists(path: Path):
     if not path.exists():
         path.mkdir()
 
-def strip_content(content: str) -> str:
+def escape_content(content: str) -> str:
     return html.escape(content).replace('\n', ' ')
+
+def brief_content(content: str, trim_len: int = 20) -> str:
+    if len(content) < trim_len:
+        return content
+    else:
+        return content[:trim_len - 4] + '…' + content[-2:]
 
 def get_share_id(chat_id: int) -> int:
     return resolve_id(chat_id)[0]

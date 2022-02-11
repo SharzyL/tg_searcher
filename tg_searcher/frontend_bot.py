@@ -75,7 +75,7 @@ class BotFrontend:
             self._redis.ping()
         except redis.exceptions.ConnectionError as e:
             self._logger.critical(f'Cannot connect to redis server {self._cfg.redis_host}: {e}')
-            raise e
+            exit(1)
 
         self._logger.info(f'Start init frontend bot')
         await self.bot.start(bot_token=self._cfg.bot_token)
@@ -165,7 +165,7 @@ class BotFrontend:
                 await self._download_history(chat_id, min_id, max_id)
                 self._logger.info(f'succeed downloading history of {chat_id} (min={min_id}, max={max_id})')
 
-        elif text.startswith('/track_chat'):
+        elif text.startswith('/monitor_chat'):
             args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
             chat_ids = args.chats or self._query_selected_chat(event)
             if chat_ids:
@@ -196,13 +196,14 @@ class BotFrontend:
             if len(q) == 0:
                 await event.reply('错误：关键词不能为空')
                 return
-            sb = []
             msg = await event.reply(f'正在搜索所有标题中包含 "{q}" 的对话…')
             chat_ids = await self.backend.find_chat_id(q)
+            sb = []
             for chat_id in chat_ids[0:50]:  # avoid too many chats included
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
-            await self.bot.edit_message(msg, ''.join(sb), parse_mode='html')
+            result_text = ''.join(sb) if len(sb) > 0 else f'未找到标题中包含 "{q}" 的对话'
+            await self.bot.edit_message(msg, result_text, parse_mode='html')
 
         else:
             await self._normal_msg_handler(event)

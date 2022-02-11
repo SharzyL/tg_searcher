@@ -7,7 +7,7 @@ from telethon.tl.patched import Message as TgMessage
 from telethon.tl.types import User
 
 from .indexer import Indexer, IndexMsg
-from .common import CommonBotConfig, strip_content, get_share_id, get_logger, format_entity_name
+from .common import CommonBotConfig, escape_content, get_share_id, get_logger, format_entity_name, brief_content
 from .session import ClientSession
 
 class BackendBotConfig:
@@ -57,15 +57,14 @@ class BackendBot:
     async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
         writer = self._indexer.ix.writer()
         self._logger.info(f'Downloading history from {chat_id} ({min_id=}, {max_id=})')
-        if chat_id not in self.monitored_chats:
-            self.monitored_chats.add(chat_id)
+        self.monitored_chats.add(chat_id)
         async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id):
-            if tg_message.raw_text and len(tg_message.raw_text.strip()) >= 0:
+            if msg_text := self._extract_text(tg_message):
                 share_id = get_share_id(chat_id)
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
                 sender = await self._get_sender_name(tg_message)
                 msg = IndexMsg(
-                    content=strip_content(tg_message.raw_text),
+                    content=msg_text,
                     url=url,
                     chat_id=chat_id,
                     post_time=datetime.fromtimestamp(tg_message.date.timestamp()),
@@ -121,10 +120,18 @@ class BackendBot:
 
     def _should_monitor(self, chat_id: int):
         # tell if a chat should be monitored
+        share_id = get_share_id(chat_id)
         if self._cfg.monitor_all:
-            return chat_id not in self.excluded_chats
+            return share_id not in self.excluded_chats
         else:
-            return chat_id in self.monitored_chats
+            return share_id in self.monitored_chats
+
+    @staticmethod
+    def _extract_text(event):
+        if hasattr(event, 'raw_text') and event.raw_text and len(event.raw_text.strip()) >= 0:
+            return escape_content(event.raw_text.strip())
+        else:
+            return ''
 
     @staticmethod
     async def _get_sender_name(message: TgMessage) -> str:
@@ -138,13 +145,13 @@ class BackendBot:
     def _register_hooks(self):
         @self.session.on(events.NewMessage())
         async def client_message_handler(event: events.NewMessage.Event):
-            if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
+            if self._should_monitor(event.chat_id) and (msg_text := self._extract_text(event)):
                 share_id = get_share_id(event.chat_id)
                 sender = await self._get_sender_name(event.message)
                 url = f'https://t.me/c/{share_id}/{event.id}'
-                self._logger.info(f'New message {url} from "{sender}"')
+                self._logger.info(f'New msg {url} from "{sender}": "{brief_content(msg_text)}"')
                 msg = IndexMsg(
-                    content=strip_content(event.raw_text),
+                    content=msg_text,
                     url=url,
                     chat_id=share_id,
                     post_time=datetime.fromtimestamp(event.date.timestamp()),
@@ -154,14 +161,16 @@ class BackendBot:
 
         @self.session.on(events.MessageEdited())
         async def client_message_update_handler(event: events.MessageEdited.Event):
-            if self._should_monitor(event.chat_id) and event.raw_text and len(event.raw_text.strip()) >= 0:
+            if self._should_monitor(event.chat_id) and (msg_text := self._extract_text(event)):
                 share_id = get_share_id(event.chat_id)
                 url = f'https://t.me/c/{share_id}/{event.id}'
-                self._logger.info(f'Update message {url}')
-                self._indexer.update(url=url, content=strip_content(event.raw_text))
+                self._logger.info(f'Update message {url} to: "{brief_content(msg_text)}"')
+                self._indexer.update(url=url, content=msg_text)
 
         @self.session.on(events.MessageDeleted())
         async def client_message_delete_handler(event: events.MessageDeleted.Event):
+            if not hasattr(event, 'chat_id') or event.chat_id is None:
+                return
             share_id = get_share_id(event.chat_id)
             if event.chat_id and self._should_monitor(event.chat_id):
                 for msg_id in event.deleted_ids:
