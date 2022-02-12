@@ -151,7 +151,7 @@ class BotFrontend:
         else:
             await self._search(event)
 
-    async def _chat_ids_from_args(self, chats: list[str]) -> list[int]:
+    async def _chat_ids_from_args(self, chats: List[str]) -> List[int]:
         return [await self.backend.str_to_chat_id(chat) for chat in chats]
 
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
