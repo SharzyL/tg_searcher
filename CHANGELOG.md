@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## [0.3.0] - 2022.2.12
+
+### Added
+- User can refer to a chat by its name
+- Display the newest message in status text
+- Reply friendly err message when chat is not found, or no chat is specified
+- `/refresh_chat_names` command
+
+### Changed
+- **[Breaking]** Separate session configuration to a standalone section
+- Store all chat names on `start()`
+- Show session name in status text
+
+### Fixed
+- New coming message handled by their original id instead of share id
+- Exception when MessageDeleted carries no chat id
+- Inconsistency in README
+
 ## [0.2.0] - 2022.1.31
 
 ### Added
