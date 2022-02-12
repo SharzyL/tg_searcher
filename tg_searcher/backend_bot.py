@@ -16,6 +16,11 @@ class BackendBotConfig:
         self.excluded_chats: Set[int] = set(get_share_id(chat_id)
                                             for chat_id in kw.get('exclude_chats', []))
 
+class EntityNotFoundError(Exception):
+    def __init__(self, entity):
+        super().__init__(f'Cannot find entity of id {entity}')
+        self.entity = entity
+
 class BackendBot:
     def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig,
                  session: ClientSession, clean_db: bool, backend_id: str):
@@ -109,13 +114,23 @@ class BackendBot:
             sb.append(f'- {await self.format_dialog_html(chat_id)} '
                       f'共 {num} 条消息\n')
             if newest_msg := self.newest_msg.get(chat_id, None):
-                sb.append(f'  最新消息：<a href="{newest_msg.url}">{brief_content(newest_msg.content)}</a>')
+                sb.append(f'  最新消息：<a href="{newest_msg.url}">{brief_content(newest_msg.content)}</a>\n')
         if print_limit == 0:
             sb.append(f'\n由于 Telegram 的消息长度限制，最多只显示 100 个对话')
         return ''.join(sb)
 
     async def translate_chat_id(self, chat_id: int) -> str:
         return await self.session.translate_chat_id(chat_id)
+
+    async def str_to_chat_id(self, chat: str) -> int:
+        try:
+            return int(chat)
+        except ValueError:
+            try:
+                entity = await self.session.get_entity(chat)
+            except ValueError:
+                raise EntityNotFoundError(chat)
+            return get_share_id(entity.id)
 
     async def format_dialog_html(self, chat_id: int):
         # TODO: handle PM URL

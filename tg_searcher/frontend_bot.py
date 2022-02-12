@@ -1,6 +1,6 @@
 import html
 from time import time
-from typing import Optional, List, Tuple, Set
+from typing import Optional, List, Tuple, Set, Union
 from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
@@ -8,13 +8,13 @@ import shlex
 import redis
 import whoosh.index
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import Message as TgMessage, \
-    BotCommand, BotCommandScopePeer, BotCommandScopeDefault
+from telethon.tl.types import BotCommand, BotCommandScopePeer, BotCommandScopeDefault
+from telethon.tl.custom import Message as TgMessage
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 
 from .common import CommonBotConfig, get_logger
-from .backend_bot import BackendBot
+from .backend_bot import BackendBot, EntityNotFoundError
 from .indexer import SearchResult
 
 
@@ -28,13 +28,13 @@ class BotFrontendConfig:
 
     def __init__(self, **kw):
         self.bot_token: str = kw['bot_token']
-        self.admin_id: int = kw['admin_id']
+        self.admin: Union[int, str] = kw['admin_id']
         self.page_len: int = kw.get('page_len', 10)
         self.redis_host: Tuple[str, int] = self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
 
         self.private_mode: bool = kw.get('private_mode', False)
         self.private_whitelist: Set[int] = set(kw.get('private_whitelist', []))
-        self.private_whitelist.add(self.admin_id)
+        self.private_whitelist.add(self.admin)
 
 
 class BotFrontend:
@@ -61,16 +61,18 @@ class BotFrontend:
         self._cfg = cfg
         self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
         self._logger = get_logger(f'bot-frontend:{frontend_id}')
+        self._admin = None  # to be initialized in start()
 
         self.download_arg_parser = ArgumentParser()
         self.download_arg_parser.add_argument('--min', type=int)
         self.download_arg_parser.add_argument('--max', type=int)
-        self.download_arg_parser.add_argument('chats', type=int, nargs='*')
-        
+        self.download_arg_parser.add_argument('chats', type=str, nargs='*')
+
         self.chat_ids_parser = ArgumentParser()
-        self.chat_ids_parser.add_argument('chats', type=int, nargs='*')
+        self.chat_ids_parser.add_argument('chats', type=str, nargs='*')
 
     async def start(self):
+        self._admin = await self.backend.str_to_chat_id(self._cfg.admin)
         try:
             self._redis.ping()
         except redis.exceptions.ConnectionError as e:
@@ -78,6 +80,7 @@ class BotFrontend:
             exit(1)
 
         self._logger.info(f'Start init frontend bot')
+        self._logger.info(f'Start login to bot')
         await self.bot.start(bot_token=self._cfg.bot_token)
         self._logger.info(f'Bot account login ok')
         await self._register_commands()
@@ -89,7 +92,7 @@ class BotFrontend:
 
         sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
         # TODO: pass structured status message from backend
-        await self.bot.send_message(self._cfg.admin_id, ''.join(sb), parse_mode='html')
+        await self.bot.send_message(self._admin, ''.join(sb), parse_mode='html')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
@@ -148,8 +151,10 @@ class BotFrontend:
         else:
             await self._search(event)
 
+    async def _chat_ids_from_args(self, chats: list[str]) -> list[int]:
+        return [await self.backend.str_to_chat_id(chat) for chat in chats]
+
     async def _admin_msg_handler(self, event: events.NewMessage.Event):
-        # TODO: support passing username as command parameter
         text: str = event.raw_text.strip()
         self._logger.info(f'Admin {event.chat_id} sends "{text}"')
         if text.startswith('/stat'):
@@ -159,25 +164,30 @@ class BotFrontend:
             args = self.download_arg_parser.parse_args(shlex.split(text)[1:])
             min_id = args.min or 1
             max_id = args.max or 1 << 31 - 1
-            chat_ids = args.chats or self._query_selected_chat(event) or self.backend.monitored_chats
+            chat_ids = await self._chat_ids_from_args(args.chats) or self._query_selected_chat(event)
+            if not chat_ids:
+                await event.reply(f'错误：请至少指定一个会话')
+                return
             for chat_id in chat_ids:
                 self._logger.info(f'start downloading history of {chat_id} (min={min_id}, max={max_id})')
-                await self._download_history(chat_id, min_id, max_id)
+                await self._download_history(event, chat_id, min_id, max_id)
                 self._logger.info(f'succeed downloading history of {chat_id} (min={min_id}, max={max_id})')
 
         elif text.startswith('/monitor_chat'):
             args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
-            chat_ids = args.chats or self._query_selected_chat(event)
-            if chat_ids:
-                for chat_id in chat_ids:
-                    self._logger.info(f'add {chat_id} to monitored_chat')
-                    self.backend.monitored_chats.add(chat_id)
-            else:
+            chat_ids = await self._chat_ids_from_args(args.chats) or self._query_selected_chat(event)
+            if not chat_ids:
                 await event.reply(f'错误：请至少指定一个会话')
+                return
+            for chat_id in chat_ids:
+                self._logger.info(f'add {chat_id} to monitored_chat')
+                self.backend.monitored_chats.add(chat_id)
+                chat_html = self.backend.format_dialog_html(chat_id)
+                await event.reply(f'{chat_html} 已被加入监听列表', parse_mode='html')
 
         elif text.startswith('/clear'):
             args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
-            chat_ids = args.chats or self._query_selected_chat(event)
+            chat_ids = await self._chat_ids_from_args(args.chats) or self._query_selected_chat(event)
             self._logger.info(f'clear downloading history of chats {chat_ids}')
             self.backend.clear(chat_ids)
             if chat_ids:
@@ -189,28 +199,27 @@ class BotFrontend:
         elif text.startswith('/refresh_chat_names'):
             msg = await event.reply(f'正在刷新后端的对话名称缓存')
             await self.backend.session.refresh_translate_table()
-            await self.bot.edit_message(msg, f'对话名称缓存刷新完成')
+            await msg.edit(msg, f'对话名称缓存刷新完成')
 
         elif text.startswith('/find_chat_id'):
             q = text[14:].strip()
             if len(q) == 0:
                 await event.reply('错误：关键词不能为空')
                 return
-            msg = await event.reply(f'正在搜索所有标题中包含 "{q}" 的对话…')
             chat_ids = await self.backend.find_chat_id(q)
             sb = []
             for chat_id in chat_ids[0:50]:  # avoid too many chats included
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 sb.append(f'{html.escape(chat_name)}: <pre>{chat_id}</pre>\n')
             result_text = ''.join(sb) if len(sb) > 0 else f'未找到标题中包含 "{q}" 的对话'
-            await self.bot.edit_message(msg, result_text, parse_mode='html')
+            await event.reply(result_text, parse_mode='html')
 
         else:
             await self._normal_msg_handler(event)
 
     async def _search(self, event: events.NewMessage.Event):
         if self.backend.is_empty():
-            await self.bot.send_message(self._cfg.admin_id, '当前索引为空，请先 /download_history 建立索引')
+            await self.bot.send_message(self._admin, '当前索引为空，请先 /download_history 建立索引')
             return
         start_time = time()
         q = event.raw_text
@@ -228,13 +237,11 @@ class BotFrontend:
         if chats:
             self._redis.set(f'{self.id}:query_chats:{event.chat_id}:{msg.id}', ','.join(map(str, chats)))
 
-    async def _download_history(self, chat_id: int, min_id: int, max_id: int):
-        admin_id = self._cfg.admin_id
+    async def _download_history(self, event: events.NewMessage.Event, chat_id: int, min_id: int, max_id: int):
         chat_html = await self.backend.format_dialog_html(chat_id)
         if min_id == 1 and max_id == 1 << 31 - 1 and not self.backend.is_empty(chat_id):
             # TODO: automatically handle message duplication
-            await self.bot.send_message(
-                admin_id,
+            await event.reply(
                 f'错误: {chat_html} 的索引非空，下载历史会导致索引重复消息，'
                 f'请先 /clear 清除索引，或者通过 --min, --max 参数指定索引范围',
                 parse_mode='html')
@@ -249,13 +256,14 @@ class BotFrontend:
             if cnt % 100 == 0:
                 prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
-                    await self.bot.edit_message(prog_msg, prog_text, parse_mode='html')
+                    await prog_msg.edit(prog_text, parse_mode='html')
                 else:
-                    prog_msg = await self.bot.send_message(admin_id, prog_text, parse_mode='html')
+                    prog_msg = await event.reply(prog_text, parse_mode='html')
             cnt += 1
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
-        await self.bot.send_message(admin_id, f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
+        await event.reply(f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
+        await prog_msg.delete()
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())
@@ -267,17 +275,21 @@ class BotFrontend:
             if self._cfg.private_mode and event.chat_id not in self._cfg.private_whitelist:
                 await event.reply(f'由于隐私设置，您无法使用本 bot')
                 return
-            if event.chat_id != self._cfg.admin_id:
+            if event.chat_id != self._admin:
                 try:
                     await self._normal_msg_handler(event)
                 except whoosh.index.LockError:
-                    event.reply(f'当前索引正在被写入，请等待现有写入操作完成')
+                    await event.reply(f'当前索引正在被写入，请等待现有写入操作完成')
+                except EntityNotFoundError as e:
+                    await event.reply(f'未找到 id 为 "{e.entity}" 的对话或用户')
                 except Exception as e:
-                    event.reply(f'错误: {e}\n\n请联系管理员修复')
+                    await event.reply(f'错误: {e}\n\n请联系管理员修复')
                     raise e
             else:
                 try:
                     await self._admin_msg_handler(event)
+                except EntityNotFoundError as e:
+                    await event.reply(f'未找到 id 为 "{e.entity}" 的对话或用户')
                 except Exception as e:
                     await event.reply(f'错误:\n\n<pre>{html.escape(format_exc())}</pre>', parse_mode='html')
                     raise e
@@ -294,19 +306,19 @@ class BotFrontend:
     async def _register_commands(self):
         admin_input_peer = None  # make IDE happy!
         try:
-            admin_input_peer = await self.bot.get_input_entity(self._cfg.admin_id)
+            admin_input_peer = await self.bot.get_input_entity(self._cfg.admin)
         except ValueError as e:
             self._logger.critical(
-                f'Admin ID {self._cfg.admin_id} is invalid, or you have not had any conversation with '
+                f'Admin ID {self._cfg.admin} is invalid, or you have not had any conversation with '
                 f'the bot yet. Please send a "/start" to the bot and retry. Exiting...', exc_info=e)
             exit(-1)
 
         admin_commands = [
-            BotCommand(command="download_chat", description='[--min=MIN] [--max=MAX] [CHAT_ID...] '
+            BotCommand(command="download_chat", description='[--min=MIN] [--max=MAX] [CHAT...] '
                                                             '下载并索引会话的历史消息，并将其加入监听列表'),
-            BotCommand(command="monitor_chat", description='CHAT_ID... 将会话加入监听列表'),
+            BotCommand(command="monitor_chat", description='CHAT... 将会话加入监听列表'),
             BotCommand(command="stat", description='查询后端索引状态'),
-            BotCommand(command="clear", description='[CHAT_ID...] 清除索引'),
+            BotCommand(command="clear", description='[CHAT...] 清除索引'),
             BotCommand(command="find_chat_id", description='KEYWORD 根据关键词获取聊天 id'),
             BotCommand(command="refresh_chat_names", description='刷新对话名称缓存'),
         ]
