@@ -21,7 +21,7 @@ services:
     tty: true         # ditto 同上
     command:
       - -f
-      - ./config/searcher.yaml
+      - /app/config/searcher.yaml
 
   redis:
     image: redis:alpine
