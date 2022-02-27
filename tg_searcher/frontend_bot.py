@@ -5,13 +5,13 @@ from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
 
-import redis
 import whoosh.index
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import BotCommand, BotCommandScopePeer, BotCommandScopeDefault
 from telethon.tl.custom import Message as TgMessage
 from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from .common import CommonBotConfig, get_logger
 from .backend_bot import BackendBot, EntityNotFoundError
@@ -75,7 +75,7 @@ class BotFrontend:
         self._admin = await self.backend.str_to_chat_id(self._cfg.admin)
         try:
             self._redis.ping()
-        except redis.exceptions.ConnectionError as e:
+        except RedisConnectionError as e:
             self._logger.critical(f'Cannot connect to redis server {self._cfg.redis_host}: {e}')
             exit(1)
 
