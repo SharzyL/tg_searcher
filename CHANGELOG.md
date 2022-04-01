@@ -12,11 +12,14 @@
 - **[Breaking]** Separate session configuration to a standalone section
 - Store all chat names on `start()`
 - Show session name in status text
+- Ignore irrevalent requests when frontend bot in group
 
 ### Fixed
 - New coming message handled by their original id instead of share id
 - Exception when MessageDeleted carries no chat id
 - Inconsistency in README
+- Wrong config path in docker-compose example
+- Privacy whitelist considers only chat id, not peer id
 
 ## [0.2.0] - 2022.1.31
 

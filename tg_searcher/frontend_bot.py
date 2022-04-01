@@ -13,7 +13,7 @@ from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from .common import CommonBotConfig, get_logger
+from .common import CommonBotConfig, get_logger, get_share_id
 from .backend_bot import BackendBot, EntityNotFoundError
 from .indexer import SearchResult
 
@@ -275,7 +275,9 @@ class BotFrontend:
             # when in group, ignore messages that are neither mentioning nor replying
             if event.is_channel and not event.message.mentioned and not event.message.message.startswith('/'):
                 return
-            if self._cfg.private_mode and event.message.from_id.user_id not in self._cfg.private_whitelist:
+            if self._cfg.private_mode \
+                    and event.message.from_id.user_id not in self._cfg.private_whitelist \
+                    and get_share_id(event.chat_id) not in self._cfg.private_whitelist:
                 await event.reply(f'由于隐私设置，您无法使用本 bot')
                 return
             if event.chat_id != self._admin:
