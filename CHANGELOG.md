@@ -9,6 +9,7 @@
 ### Fixed
 - Privacy whitelist considers only chat id, not peer id
 - Wrong config path in docker-compose example
+- Respond to own message
 
 ## [0.3.0] - 2022.2.12
 

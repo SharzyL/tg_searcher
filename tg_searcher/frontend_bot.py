@@ -286,13 +286,14 @@ class BotFrontend:
 
         @self.bot.on(events.NewMessage())
         async def bot_message_handler(event: events.NewMessage.Event):
-            print(event)
-            print(await event.message.get_sender())
+            sender = await event.message.get_sender()
             # when in group, ignore messages that are neither mentioning nor replying
             if event.is_channel and not event.message.mentioned and not f'@{self.username}' in event.raw_text:
                 return
+            if sender.is_self:
+                return
             if self._cfg.private_mode \
-                    and (await event.message.get_sender()).id not in self._cfg.private_whitelist \
+                    and sender.id not in self._cfg.private_whitelist \
                     and get_share_id(event.chat_id) not in self._cfg.private_whitelist:
                 await event.reply(f'由于隐私设置，您无法使用本 bot')
                 return
