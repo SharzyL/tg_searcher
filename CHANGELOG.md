@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## dev branch
+
+### Changed
+- Ignore irrevalent requests when frontend bot in group
+- Add '/search' for searching in a group
+
+### Fixed
+- Privacy whitelist considers only chat id, not peer id
+- Wrong config path in docker-compose example
+
 ## [0.3.0] - 2022.2.12
 
 ### Added
@@ -12,14 +22,11 @@
 - **[Breaking]** Separate session configuration to a standalone section
 - Store all chat names on `start()`
 - Show session name in status text
-- Ignore irrevalent requests when frontend bot in group
 
 ### Fixed
 - New coming message handled by their original id instead of share id
 - Exception when MessageDeleted carries no chat id
 - Inconsistency in README
-- Wrong config path in docker-compose example
-- Privacy whitelist considers only chat id, not peer id
 
 ## [0.2.0] - 2022.1.31
 

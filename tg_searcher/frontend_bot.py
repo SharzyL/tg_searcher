@@ -13,7 +13,7 @@ from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from .common import CommonBotConfig, get_logger, get_share_id
+from .common import CommonBotConfig, get_logger, get_share_id, remove_first_word
 from .backend_bot import BackendBot, EntityNotFoundError
 from .indexer import SearchResult
 
@@ -62,6 +62,7 @@ class BotFrontend:
         self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
         self._logger = get_logger(f'bot-frontend:{frontend_id}')
         self._admin = None  # to be initialized in start()
+        self.username = None
 
         self.download_arg_parser = ArgumentParser()
         self.download_arg_parser.add_argument('--min', type=int)
@@ -82,7 +83,8 @@ class BotFrontend:
         self._logger.info(f'Start init frontend bot')
         self._logger.info(f'Start login to bot')
         await self.bot.start(bot_token=self._cfg.bot_token)
-        self._logger.info(f'Bot account login ok')
+        self.username = (await self.bot.get_me()).username
+        self._logger.info(f'Bot (@{self.username}) account login ok')
         await self._register_commands()
         self._logger.info(f'Register bot commands ok')
         self._register_hooks()
@@ -121,29 +123,36 @@ class BotFrontend:
         await event.answer()
 
     async def _normal_msg_handler(self, event: events.NewMessage.Event):
-        text: str = event.message.message
-        self._logger.info(f'User {event.chat_id} sends "{text}"')
+        text: str = event.raw_text.strip()
+        self._logger.info(f'User {(await event.message.get_sender()).id} (in {event.chat_id}) sends "{text}"')
 
-        if not (text and text.strip()) or text.startswith('/start'):
+        if not text or text.startswith('/start'):
             return
 
         elif text.startswith('/random'):
             # TODO: support random msg in a given chat
-            msg = self.backend.rand_msg()
-            chat_name = await self.backend.translate_chat_id(msg.chat_id)
-            respond = f'随机消息: <b>{chat_name} [{msg.post_time}]</b>\n'
-            respond += f'{msg.url}\n'
+            # TODO: show message brief
+            try:
+                msg = self.backend.rand_msg()
+                chat_name = await self.backend.translate_chat_id(msg.chat_id)
+                respond = f'随机消息: <b>{chat_name} [{msg.post_time}]</b>\n'
+                respond += f'{msg.url}\n'
+            except IndexError:
+                respond = '错误：索引为空'
             await event.respond(respond, parse_mode='html')
 
         elif text.startswith('/chats'):
             # TODO: support paging
             buttons = []
-            kw = text[7:].strip()
+            kw = remove_first_word(text)
             for chat_id in self.backend.monitored_chats:
                 chat_name = await self.backend.translate_chat_id(chat_id)
                 if kw in chat_name:
                     buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
             await event.respond('选择一个聊天', buttons=buttons)
+
+        elif text.startswith('/search'):
+            await self._search(event)
 
         elif text.startswith('/'):
             await event.respond(f'错误：未知命令 {text.split()[0]}')
@@ -218,11 +227,15 @@ class BotFrontend:
             await self._normal_msg_handler(event)
 
     async def _search(self, event: events.NewMessage.Event):
+        print('start search')
         if self.backend.is_empty():
-            await self.bot.send_message(self._admin, '当前索引为空，请先 /download_history 建立索引')
+            await event.reply('当前索引为空，请先 /download_history 建立索引')
             return
         start_time = time()
-        q = event.raw_text
+        q: str = event.raw_text
+        if q.startswith('/'):
+            first_space = q.index(' ')
+            q = q[first_space+1:]
         chats = self._query_selected_chat(event)
 
         self._logger.info(f'Search "{q}" in chats {chats}')
@@ -253,6 +266,7 @@ class BotFrontend:
             nonlocal prog_msg, cnt
             remaining_msg_cnt = msg_id - min_id
 
+            # FIXME: remaining_msg_cnt not correct
             if cnt % 100 == 0:
                 prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
@@ -272,11 +286,13 @@ class BotFrontend:
 
         @self.bot.on(events.NewMessage())
         async def bot_message_handler(event: events.NewMessage.Event):
+            print(event)
+            print(await event.message.get_sender())
             # when in group, ignore messages that are neither mentioning nor replying
-            if event.is_channel and not event.message.mentioned and not event.message.message.startswith('/'):
+            if event.is_channel and not event.message.mentioned and not f'@{self.username}' in event.raw_text:
                 return
             if self._cfg.private_mode \
-                    and event.message.from_id.user_id not in self._cfg.private_whitelist \
+                    and (await event.message.get_sender()).id not in self._cfg.private_whitelist \
                     and get_share_id(event.chat_id) not in self._cfg.private_whitelist:
                 await event.reply(f'由于隐私设置，您无法使用本 bot')
                 return
@@ -302,11 +318,12 @@ class BotFrontend:
     def _query_selected_chat(self, event: events.NewMessage.Event) -> Optional[List[int]]:
         msg: TgMessage = event.message
         if msg.reply_to:
-            return [int(self._redis.get(
+            redis_query_result = self._redis.get(
                 f'{self.id}:select_chat:{event.chat_id}:{msg.reply_to.reply_to_msg_id}'
-            ))]
-        else:
-            return None
+            )
+            if redis_query_result:
+                return [int(redis_query_result)]
+        return None
 
     async def _register_commands(self):
         admin_input_peer = None  # make IDE happy!
@@ -330,6 +347,7 @@ class BotFrontend:
         commands = [
             BotCommand(command="random", description='随机返回一条已索引消息'),
             BotCommand(command="chats", description='选择对话'),
+            BotCommand(command="search", description='搜索消息'),
         ]
         await self.bot(
             SetBotCommandsRequest(

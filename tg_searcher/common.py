@@ -18,6 +18,13 @@ def ensure_path_exists(path: Path):
 def escape_content(content: str) -> str:
     return html.escape(content).replace('\n', ' ')
 
+def remove_first_word(text: str) -> str:
+    first_space = text.find(' ')
+    if first_space < 0:
+        return ''
+    else:
+        return text[first_space+1:]
+
 def brief_content(content: str, trim_len: int = 20) -> str:
     if len(content) < trim_len:
         return content
