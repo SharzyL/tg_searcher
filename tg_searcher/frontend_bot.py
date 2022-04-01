@@ -272,7 +272,10 @@ class BotFrontend:
 
         @self.bot.on(events.NewMessage())
         async def bot_message_handler(event: events.NewMessage.Event):
-            if self._cfg.private_mode and event.chat_id not in self._cfg.private_whitelist:
+            # when in group, ignore messages that are neither mentioning nor replying
+            if event.is_channel and not event.message.mentioned and not event.message.message.startswith('/'):
+                return
+            if self._cfg.private_mode and event.message.from_id.user_id not in self._cfg.private_whitelist:
                 await event.reply(f'由于隐私设置，您无法使用本 bot')
                 return
             if event.chat_id != self._admin:
