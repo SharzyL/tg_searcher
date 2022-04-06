@@ -65,7 +65,7 @@ class BackendBot:
         share_id = get_share_id(chat_id)
         self._logger.info(f'Downloading history from {share_id} ({min_id=}, {max_id=})')
         self.monitored_chats.add(share_id)
-        async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id, reverse=True):
+        async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id):
             if msg_text := self._extract_text(tg_message):
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
                 sender = await self._get_sender_name(tg_message)

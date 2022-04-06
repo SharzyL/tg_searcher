@@ -266,7 +266,6 @@ class BotFrontend:
             nonlocal prog_msg, cnt
             remaining_msg_cnt = msg_id - min_id
 
-            # FIXME: remaining_msg_cnt not correct
             if cnt % 100 == 0:
                 prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
@@ -288,7 +287,7 @@ class BotFrontend:
         async def bot_message_handler(event: events.NewMessage.Event):
             sender = await event.message.get_sender()
             # when in group, ignore messages that are neither mentioning nor replying
-            if event.is_channel and not event.message.mentioned and not f'@{self.username}' in event.raw_text:
+            if event.is_channel and not event.message.mentioned and f'@{self.username}' not in event.raw_text:
                 return
             if sender.is_self:
                 return
