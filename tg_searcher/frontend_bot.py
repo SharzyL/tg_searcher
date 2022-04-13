@@ -98,7 +98,7 @@ class BotFrontend:
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
-        if event.data:
+        if event.data.strip():
             data = event.data.decode('utf-8').split('=')
             if data[0] == 'search_page':
                 page_num = int(data[1])
@@ -234,8 +234,15 @@ class BotFrontend:
         start_time = time()
         q: str = event.raw_text
         if q.startswith('/'):
-            first_space = q.index(' ')
+            first_space = q.find(' ')
+            if first_space < 0:
+                first_space = len(q)
             q = q[first_space+1:]
+
+        if len(q) == 0:
+            # do not respond to empty query
+            return
+
         chats = self._query_selected_chat(event)
 
         self._logger.info(f'Search "{q}" in chats {chats}')
