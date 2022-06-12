@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## dev
+
+### Fixed
+- Error when proxy config is missed
+
 ## [0.3.1] - 2022.4.6
 
 ### Changed

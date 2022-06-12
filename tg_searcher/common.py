@@ -50,16 +50,16 @@ class CommonBotConfig:
         url = url_parse.urlparse(proxy_str)
         return url.scheme, url.hostname, url.port
 
-    def __init__(self, proxy: Optional[str], api_id: int, api_hash: str, runtime_dir: str, name: str):
-        self.proxy: Optional[tuple] = proxy and self._parse_proxy(proxy)
-        self.api_id: int = api_id
-        self.api_hash: str = api_hash
-        self.name: str = name
-        self.runtime_dir: Path = Path(runtime_dir)
-        self.session_dir: Path = self.runtime_dir / name / 'session'
-        self.index_dir: Path = self.runtime_dir / name / 'index'
+    def __init__(self, cfg: dict):
+        self.proxy: Optional[tuple] = cfg.get('proxy') and self._parse_proxy(cfg.get('proxy'))
+        self.api_id: int = cfg['api_id']
+        self.api_hash: str = cfg['api_hash']
+        self.name: str = cfg['name']
+        self.runtime_dir: Path = Path(cfg['runtime_dir'])
+        self.session_dir: Path = self.runtime_dir / cfg['name'] / 'session'
+        self.index_dir: Path = self.runtime_dir / cfg['name'] / 'index'
         ensure_path_exists(self.runtime_dir)
-        ensure_path_exists(self.runtime_dir / name)
+        ensure_path_exists(self.runtime_dir / cfg['name'])
         ensure_path_exists(self.session_dir)
         ensure_path_exists(self.index_dir)
 

@@ -191,8 +191,8 @@ class BackendBot:
         async def client_message_delete_handler(event: events.MessageDeleted.Event):
             if not hasattr(event, 'chat_id') or event.chat_id is None:
                 return
-            share_id = get_share_id(event.chat_id)
-            if event.chat_id and self._should_monitor(event.chat_id):
+            if self._should_monitor(event.chat_id):
+                share_id = get_share_id(event.chat_id)
                 for msg_id in event.deleted_ids:
                     url = f'https://t.me/c/{share_id}/{msg_id}'
                     self._logger.info(f'Delete message {url}')
