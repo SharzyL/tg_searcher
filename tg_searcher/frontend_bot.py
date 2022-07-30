@@ -208,7 +208,7 @@ class BotFrontend:
         elif text.startswith('/refresh_chat_names'):
             msg = await event.reply(f'正在刷新后端的对话名称缓存')
             await self.backend.session.refresh_translate_table()
-            await msg.edit(msg, f'对话名称缓存刷新完成')
+            await msg.edit(f'对话名称缓存刷新完成')
 
         elif text.startswith('/find_chat_id'):
             q = text[14:].strip()

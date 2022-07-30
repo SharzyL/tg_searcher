@@ -4,6 +4,7 @@
 
 ### Fixed
 - Error when proxy config is missed
+- Improper call to msg.edit with `/refresh_chat_names`
 
 ## [0.3.1] - 2022.4.6
 
