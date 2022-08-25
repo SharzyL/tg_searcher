@@ -81,7 +81,7 @@ backends:
 frontends:
   - type: bot               # 目前只支持 bot 类型的前端
     id: public
-    use_backend: pub_idx    # 使用的后端的名称
+    use_backend: pub_index    # 使用的后端的名称
     config:
       admin_id: 619376577   # 管理员的用户 ID
       bot_token: 1200617810:CAF930aE75Vbac02K34tR-A8abzZP4uAq98
@@ -95,6 +95,7 @@ frontends:
       admin_id: 619376577
       # 不同前端应该使用不同的 bot_token
       bot_token: 2203317382:BkF390ab92kcb1b2ii2b4-1sbc39i20bb12
+      redis: localhost:6379 # Redis 服务器的地址，默认为 localhost:6379
       # 如果开启了 private_mode，那么只有 private_whitelist 里的用户才能使用 bot
       # 管理员默认位于 private_whitelist 中，无需额外添加
       private_mode: true
