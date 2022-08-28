@@ -92,9 +92,12 @@ class BotFrontend:
         # prevent chat with bot being indexed
         self.backend.excluded_chats.add((await self.bot.get_me()).id)
 
-        sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
-        # TODO: pass structured status message from backend
-        await self.bot.send_message(self._admin, ''.join(sb), parse_mode='html')
+        try:
+            sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
+            # TODO: pass structured status message from backend
+            await self.bot.send_message(self._admin, ''.join(sb), parse_mode='html')
+        except Exception as e:
+            await self.bot.send_message(self._admin, f'Error on get_index_status: {e}')
 
     async def _callback_handler(self, event: events.CallbackQuery.Event):
         self._logger.info(f'Callback query ({event.message_id}) from {event.chat_id}, data={event.data}')
@@ -145,11 +148,14 @@ class BotFrontend:
             # TODO: support paging
             buttons = []
             kw = remove_first_word(text)
-            for chat_id in self.backend.monitored_chats:
-                chat_name = await self.backend.translate_chat_id(chat_id)
-                if kw in chat_name:
-                    buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
-            await event.respond('选择一个聊天', buttons=buttons)
+            if self.backend.monitored_chats:
+                for chat_id in self.backend.monitored_chats:
+                    chat_name = await self.backend.translate_chat_id(chat_id)
+                    if kw in chat_name:
+                        buttons.append([Button.inline(f'{chat_name} ({chat_id})', f'select_chat={chat_id}')])
+                await event.respond('选择一个聊天', buttons=buttons)
+            else:
+                await event.respond('暂无监听聊天，使用 /download_chat 或 /monitor_chat 以监听聊天')
 
         elif text.startswith('/search'):
             await self._search(event)
@@ -283,7 +289,8 @@ class BotFrontend:
 
         await self.backend.download_history(chat_id, min_id, max_id, call_back)
         await event.reply(f'{chat_html} 下载完成，共计 {cnt} 条消息', parse_mode='html')
-        await prog_msg.delete()
+        if prog_msg:
+            await prog_msg.delete()
 
     def _register_hooks(self):
         @self.bot.on(events.CallbackQuery())

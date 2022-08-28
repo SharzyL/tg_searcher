@@ -2,6 +2,7 @@ import html
 from datetime import datetime
 from typing import Optional, List, Set, Dict
 
+import telethon.errors.rpcerrorlist
 from telethon import events
 from telethon.tl.patched import Message as TgMessage
 from telethon.tl.types import User
@@ -86,8 +87,11 @@ class BackendBot:
             for chat_id in chat_ids:
                 with self._indexer.ix.writer() as w:
                     w.delete_by_term('chat_id', str(chat_id))
+            for chat_id in chat_ids:
+                self.monitored_chats.remove(chat_id)
         else:
             self._indexer.clear()
+            self.monitored_chats.clear()
 
     async def find_chat_id(self, q: str) -> List[int]:
         return await self.session.find_chat_id(q)
@@ -120,7 +124,10 @@ class BackendBot:
         return ''.join(sb)
 
     async def translate_chat_id(self, chat_id: int) -> str:
-        return await self.session.translate_chat_id(chat_id)
+        try:
+            return await self.session.translate_chat_id(chat_id)
+        except telethon.errors.rpcerrorlist.ChannelPrivateError:
+            return '[无法获取名称]'
 
     async def str_to_chat_id(self, chat: str) -> int:
         try:
