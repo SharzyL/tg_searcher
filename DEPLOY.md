@@ -1,6 +1,6 @@
 # 部署
 
-我们提供了两种部署的方法：手动部署，使用 docker-compose 部署和 nix flake 部署。
+我们提供了三种部署的方法：手动部署，使用 docker-compose 部署和 nix flake 部署。
 
 ## 手动运行
 
@@ -107,7 +107,7 @@ docker-compose up -d
   };
 
   outputs = { self, nixpkgs, searcher }@inputs: {
-    nixosConfigurations.holland = let
+    nixosConfigurations.your-hostname = let
       system = "x86_64-linux";
     in
     nixpkgs.lib.nixosSystem {
