@@ -150,5 +150,5 @@ docker-compose up -d
 }
 ```
 
-使用 `nixos-rebuild switch` 即可部署。 
+使用 `nixos-rebuild switch` 即可部署。初次登录的时候需要手动登录，找到 `pkgs.searcher` 的路径手动运行程序即可（在 systemctl status 里面很容易找到这个路径）。
 
