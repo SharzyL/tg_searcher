@@ -20,7 +20,7 @@ setup(
     license='MIT',
     python_requires='>=3.8',
     install_requires=[
-        'telethon~=1.24.0',
+        'telethon~=1.25.0',
         'cryptg',
         'whoosh~=2.7.4',
         'python-socks[asyncio]',
