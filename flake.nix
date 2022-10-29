@@ -2,8 +2,8 @@
   description = "Tg searcher: a searcher framework for Telegram";
 
   inputs = {
-    nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
-    flake-utils.url = github:numtide/flake-utils;
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = { self, nixpkgs, flake-utils }:
@@ -18,6 +18,7 @@
             buildInputs = [ searcher-pkg ];
           };
 
+          defaultApp = searcher-pkg;
           defaultPackage = searcher-pkg;
         }
       );

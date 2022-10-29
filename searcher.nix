@@ -15,7 +15,7 @@ cryptg = buildPythonPackage rec {
 };
 
 in
-buildPythonApplication rec {
+buildPythonApplication {
   version = "0.1.2";
   pname = "tg-searcher";
   src = ./.;
