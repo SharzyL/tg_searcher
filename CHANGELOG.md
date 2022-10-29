@@ -2,6 +2,9 @@
 
 ## dev
 
+### Added
+- Add nix flake deployment
+
 ### Fixed
 - Error when proxy config is missed
 - Improper call to msg.edit with `/refresh_chat_names`

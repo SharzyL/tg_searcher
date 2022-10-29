@@ -1,6 +1,6 @@
 # 部署
 
-我们提供了两种部署的方法：手动部署和使用 docker-compose 部署。
+我们提供了两种部署的方法：手动部署，使用 docker-compose 部署和 nix flake 部署。
 
 ## 手动运行
 
@@ -90,3 +90,65 @@ docker-compose down  # 先停止运行
 docker-compose pull  # 更新镜像
 docker-compose up -d
 ```
+
+## Nix Flake
+
+假设你正在使用 NixOS，并且启用了 flake，以下是一个部署 `tg_searcher` 的示例:
+
+```nix
+# flake.nix
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    searcher = {
+      url = "github:SharzyL/tg_searcher";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { self, nixpkgs, searcher }@inputs: {
+    nixosConfigurations.holland = let
+      system = "x86_64-linux";
+    in
+    nixpkgs.lib.nixosSystem {
+      inherit system;
+      specialArgs = inputs;
+      modules = [
+        {
+          nixpkgs.overlays = [
+            (final: prev: {
+              searcher = searcher.defaultPackage.${system};
+            })
+          ];
+        }
+        ./searcher.nix
+      ];
+    };
+  };
+}
+```
+
+```nix
+# searcher.nix
+{ config, lib, pkgs, ... }:
+
+{
+  systemd.services.searcher = {
+    description = "tg searcher";
+    after = [ "network.target" "redis-searcher.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      ExecStart = "${pkgs.searcher}/bin/tg-searcher --config /path/to/config.yaml";
+      User = "sharzy";
+    };
+  };
+
+  services.redis.servers.searcher = {
+    enable = true;
+    port = 6379;
+  };
+}
+```
+
+使用 `nixos-rebuild switch` 即可部署。 
+
