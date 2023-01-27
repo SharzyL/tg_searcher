@@ -235,7 +235,7 @@ class BotFrontend:
     async def _search(self, event: events.NewMessage.Event):
         print('start search')
         if self.backend.is_empty():
-            await event.reply('当前索引为空，请先 /download_history 建立索引')
+            await event.reply('当前索引为空，请先 /download_chat 建立索引')
             return
         start_time = time()
         q: str = event.raw_text
