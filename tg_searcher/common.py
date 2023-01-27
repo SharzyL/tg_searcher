@@ -48,6 +48,8 @@ class CommonBotConfig:
     @staticmethod
     def _parse_proxy(proxy_str: str):
         url = url_parse.urlparse(proxy_str)
+        if url.username and url.password:
+            return url.scheme, url.hostname, url.port, True, url.username, url.password
         return url.scheme, url.hostname, url.port
 
     def __init__(self, cfg: dict):
