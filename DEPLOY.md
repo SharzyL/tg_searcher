@@ -16,7 +16,7 @@ python3 -m pip install -U tg-searcher
 # python3 -m pip install -U git+https://github.com/SharzyL/tg_searcher
 
 # or install locally
-# git clone https://github.com/SharzyL/tg_seacher && cd tg_searcher
+# git clone https://github.com/SharzyL/tg_searcher && cd tg_searcher
 # python3 -m pip install -e .
 ```
 
