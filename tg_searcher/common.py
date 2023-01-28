@@ -49,6 +49,9 @@ class CommonBotConfig:
     def _parse_proxy(proxy_str: str):
         url = url_parse.urlparse(proxy_str)
         if url.username and url.password:
+            # For backwards compatibility with PySocks 
+            # (proxy_type, addr, port, rdns, username, password)
+            # https://docs.telethon.dev/en/stable/basic/signing-in.html#signing-in-behind-a-proxy
             return url.scheme, url.hostname, url.port, True, url.username, url.password
         return url.scheme, url.hostname, url.port
 
