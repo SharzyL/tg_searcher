@@ -79,7 +79,8 @@ class BackendBot:
                 )
                 self._indexer.add_document(msg, writer)
                 self.newest_msg[share_id] = msg
-                await call_back(tg_message.id)
+                if call_back:
+                    await call_back(tg_message.id)
         writer.commit()
 
     def clear(self, chat_ids: Optional[List[int]] = None):

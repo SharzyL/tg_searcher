@@ -5,6 +5,9 @@
 ### Added
 - Add nix flake deployment
 
+### Changed
+- `\clear` will do nothing, `\clear all` will clear all
+
 ### Fixed
 - Error when proxy config is missed
 - Improper call to msg.edit with `/refresh_chat_names`

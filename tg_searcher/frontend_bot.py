@@ -202,12 +202,29 @@ class BotFrontend:
 
         elif text.startswith('/clear'):
             args = self.chat_ids_parser.parse_args(shlex.split(text)[1:])
-            chat_ids = await self._chat_ids_from_args(args.chats) or self._query_selected_chat(event)
+
+            chat_ids = None
+            selected_chat_id = self._query_selected_chat(event)
+            if len(args.chats) == 0 and selected_chat_id is None:
+                await event.reply(
+                    f'请使用 <pre>/clear all</pre> 以清除全部索引，'
+                    f'或者使用 <pre>/clear [CHAT ...]</pre> 指定需要删除的对话的名称或 ID', parse_mode='html')
+                return
+            if len(args.chats) == 1 and args.chats[0] == 'all':
+                chat_ids = None  # None means clear all
+            else:
+                try:
+                    chat_ids = await self._chat_ids_from_args(args.chats) or selected_chat_id
+                except EntityNotFoundError as e:
+                    await event.reply(f'无法找到 "${e.entity}" 对应的对话，请使用正确的 ID')
+                    return
+
             self._logger.info(f'clear downloading history of chats {chat_ids}')
             self.backend.clear(chat_ids)
             if chat_ids:
                 for chat_id in chat_ids:
-                    await event.reply(f'{await self.backend.format_dialog_html(chat_id)} 的索引已清除', parse_mode='html')
+                    await event.reply(f'{await self.backend.format_dialog_html(chat_id)} 的索引已清除',
+                                      parse_mode='html')
             else:
                 await event.reply('全部索引已清除')
 
@@ -243,7 +260,7 @@ class BotFrontend:
             first_space = q.find(' ')
             if first_space < 0:
                 first_space = len(q)
-            q = q[first_space+1:]
+            q = q[first_space + 1:]
 
         if len(q) == 0:
             # do not respond to empty query
