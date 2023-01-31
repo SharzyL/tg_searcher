@@ -8,8 +8,10 @@ from telethon.tl.patched import Message as TgMessage
 from telethon.tl.types import User
 
 from .indexer import Indexer, IndexMsg
-from .common import CommonBotConfig, escape_content, get_share_id, get_logger, format_entity_name, brief_content
+from .common import CommonBotConfig, escape_content, get_share_id, get_logger, format_entity_name, brief_content, \
+    EntityNotFoundError
 from .session import ClientSession
+
 
 class BackendBotConfig:
     def __init__(self, **kw):
@@ -17,10 +19,6 @@ class BackendBotConfig:
         self.excluded_chats: Set[int] = set(get_share_id(chat_id)
                                             for chat_id in kw.get('exclude_chats', []))
 
-class EntityNotFoundError(Exception):
-    def __init__(self, entity):
-        super().__init__(f'Cannot find entity of id {entity}')
-        self.entity = entity
 
 class BackendBot:
     def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig,
@@ -131,14 +129,7 @@ class BackendBot:
             return '[无法获取名称]'
 
     async def str_to_chat_id(self, chat: str) -> int:
-        try:
-            return int(chat)
-        except ValueError:
-            try:
-                entity = await self.session.get_entity(chat)
-            except ValueError:
-                raise EntityNotFoundError(chat)
-            return get_share_id(entity.id)
+        return await self.session.str_to_chat_id(chat)
 
     async def format_dialog_html(self, chat_id: int):
         # TODO: handle PM URL

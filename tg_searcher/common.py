@@ -7,23 +7,28 @@ from typing import Optional
 from telethon.utils import resolve_id
 from telethon.tl.types import User, Chat, Channel
 
+
 def get_logger(name: str):
     _logger = logging.getLogger(name)
     return _logger
+
 
 def ensure_path_exists(path: Path):
     if not path.exists():
         path.mkdir()
 
+
 def escape_content(content: str) -> str:
     return html.escape(content).replace('\n', ' ')
+
 
 def remove_first_word(text: str) -> str:
     first_space = text.find(' ')
     if first_space < 0:
         return ''
     else:
-        return text[first_space+1:]
+        return text[first_space + 1:]
+
 
 def brief_content(content: str, trim_len: int = 20) -> str:
     if len(content) < trim_len:
@@ -31,8 +36,10 @@ def brief_content(content: str, trim_len: int = 20) -> str:
     else:
         return content[:trim_len - 4] + '…' + content[-2:]
 
+
 def get_share_id(chat_id: int) -> int:
     return resolve_id(chat_id)[0]
+
 
 def format_entity_name(entity):
     if isinstance(entity, User):
@@ -43,6 +50,7 @@ def format_entity_name(entity):
         return entity.title
     else:
         raise ValueError(f'Unknown entity {entity}')
+
 
 class CommonBotConfig:
     @staticmethod
@@ -68,3 +76,8 @@ class CommonBotConfig:
         ensure_path_exists(self.session_dir)
         ensure_path_exists(self.index_dir)
 
+
+class EntityNotFoundError(Exception):
+    def __init__(self, entity):
+        super().__init__(f'Cannot find entity of id {entity}')
+        self.entity = entity

@@ -45,6 +45,7 @@ class FakeRedis:
     Sometimes we want a lightweight deployment without using a redis to persist data,
     FakeRedis provides a in-memory replacement for redis interface
     """
+
     def __init__(self):
         self._data = {}
 
@@ -56,6 +57,7 @@ class FakeRedis:
 
     def ping(self):
         pass
+
 
 class BotFrontend:
     """
@@ -235,11 +237,7 @@ class BotFrontend:
             if len(args.chats) == 1 and args.chats[0] == 'all':
                 chat_ids = None  # None means clear all
             else:
-                try:
-                    chat_ids = await self._chat_ids_from_args(args.chats) or selected_chat_id
-                except EntityNotFoundError as e:
-                    await event.reply(f'无法找到 "${e.entity}" 对应的对话，请使用正确的 ID')
-                    return
+                chat_ids = await self._chat_ids_from_args(args.chats) or selected_chat_id
 
             self._logger.info(f'clear downloading history of chats {chat_ids}')
             self.backend.clear(chat_ids)

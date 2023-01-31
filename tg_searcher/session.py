@@ -2,7 +2,8 @@ from typing import Dict, List
 
 from telethon.client import TelegramClient
 
-from .common import get_logger, format_entity_name
+from .common import get_logger, format_entity_name, EntityNotFoundError, get_share_id
+
 
 class ClientSession(TelegramClient):
     def __init__(self, *args, name, **argv):
@@ -21,9 +22,22 @@ class ClientSession(TelegramClient):
     async def translate_chat_id(self, chat_id: int) -> str:
         # TODO: unify dialog title / entity name
         if chat_id not in self._id_to_title_table:
-            entity = await self.get_entity(await self.get_input_entity(chat_id))
+            try:
+                entity = await self.get_entity(await self.get_input_entity(chat_id))
+            except ValueError:
+                raise EntityNotFoundError(chat_id)
             self._id_to_title_table[chat_id] = format_entity_name(entity)
         return self._id_to_title_table[chat_id]
+
+    async def str_to_chat_id(self, chat: str) -> int:
+        try:
+            return int(chat)
+        except ValueError:
+            try:
+                entity = await self.get_entity(chat)
+            except ValueError:
+                raise EntityNotFoundError(chat)
+            return get_share_id(entity.id)
 
     async def refresh_translate_table(self):
         self._logger.info(f'Start iterating dialogs')
