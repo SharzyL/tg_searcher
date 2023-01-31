@@ -117,9 +117,10 @@ class BotFrontend:
         self.backend.excluded_chats.add((await self.bot.get_me()).id)
 
         try:
-            sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
+            msg_head = 'bot 初始化完成\n\n'
+            stat_text = await self.backend.get_index_status(length_limit=4000 - len(msg_head))
             # TODO: pass structured status message from backend
-            await self.bot.send_message(self._admin, brief_content(''.join(sb), 4096), parse_mode='html')
+            await self.bot.send_message(self._admin, msg_head + stat_text, parse_mode='html')
         except Exception as e:
             await self.bot.send_message(self._admin, f'Error on get_index_status: {e}')
 

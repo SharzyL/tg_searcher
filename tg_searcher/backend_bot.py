@@ -95,31 +95,43 @@ class BackendBot:
     async def find_chat_id(self, q: str) -> List[int]:
         return await self.session.find_chat_id(q)
 
-    async def get_index_status(self):
+    async def get_index_status(self, length_limit: int = 4000):
         # TODO: add session and frontend name
+        cur_len = 0
         sb = [  # string builder
             f'后端 "{self.id}"（session: "{self.session.name}"）总消息数: <b>{self._indexer.ix.doc_count()}</b>\n\n'
         ]
+        overflow_msg = f'\n\n由于 Telegram 消息长度限制，部分对话的统计信息没有展示'
+
+        def append_msg(msg_list: List[str]):  # return whether overflow
+            nonlocal cur_len, sb
+            total_len = sum(len(msg) for msg in msg_list)
+            if cur_len + total_len > length_limit - len(overflow_msg):
+                return True
+            else:
+                cur_len += total_len
+                for msg in msg_list:
+                    sb.append(msg)
+                    return False
+
         if self._cfg.monitor_all:
-            sb.append(f'{len(self.excluded_chats)} 个对话被禁止索引\n')
+            append_msg([f'{len(self.excluded_chats)} 个对话被禁止索引\n'])
             for chat_id in self.excluded_chats:
-                sb.append(f'- {await self.format_dialog_html(chat_id)}\n')
+                append_msg([f'- {await self.format_dialog_html(chat_id)}\n'])
             sb.append('\n')
 
-        sb.append(f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n')
-        print_limit = 100  # since telegram can send at most 4096 chars per msg
+        append_msg([f'总计 {len(self.monitored_chats)} 个对话被加入了索引：\n'])
         for chat_id in self.monitored_chats:
-            if print_limit > 0:
-                print_limit -= 1
-            else:
-                break
+            msg_for_chat = []
             num = self._indexer.count_by_query(chat_id=str(chat_id))
-            sb.append(f'- {await self.format_dialog_html(chat_id)} '
-                      f'共 {num} 条消息\n')
+            msg_for_chat.append(f'- {await self.format_dialog_html(chat_id)} 共 {num} 条消息\n')
             if newest_msg := self.newest_msg.get(chat_id, None):
-                sb.append(f'  最新消息：<a href="{newest_msg.url}">{brief_content(newest_msg.content)}</a>\n')
-        if print_limit == 0:
-            sb.append(f'\n由于 Telegram 的消息长度限制，最多只显示 100 个对话')
+                msg_for_chat.append(f'  最新消息：<a href="{newest_msg.url}">{brief_content(newest_msg.content)}</a>\n')
+            if append_msg(msg_for_chat):
+                # if overflow
+                sb.append(overflow_msg)
+                break
+
         return ''.join(sb)
 
     async def translate_chat_id(self, chat_id: int) -> str:
