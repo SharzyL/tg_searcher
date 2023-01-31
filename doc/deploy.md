@@ -13,14 +13,14 @@
 python3 -m pip install -U tg-searcher
 
 # or install from github
-# python3 -m pip install -U git+https://github.com/SharzyL/tg_searcher
+python3 -m pip install -U git+https://github.com/SharzyL/tg_searcher
 
 # or install locally
-# git clone https://github.com/SharzyL/tg_searcher && cd tg_searcher
-# python3 -m pip install -e .
+git clone https://github.com/SharzyL/tg_searcher && cd tg_searcher
+python3 -m pip install -e .
 ```
 
-参考 README 填写配置文件，运行 `python3 -m tg_searcher -f /path/to/config.yaml` 即可。如果 pip 安装可执行文件的目录在 `PATH` 里面，也可以直接 `tg-searcher -f /path/to/config.yaml`。
+参考 [configuration.md](./configuration.md) 填写配置文件之后，运行 `python3 -m tg_searcher -f /path/to/config.yaml` 即可。如果 pip 安装可执行文件的目录在 `PATH` 中，也可以直接 `tg-searcher -f /path/to/config.yaml`。
 
 首次运行时需要填写验证码（如果设置了两步验证，还需填写密码）。运行成功后 bot 会在 Telegram 中向管理员发送一条包含服务器状态的消息。
 
