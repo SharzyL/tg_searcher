@@ -4,6 +4,7 @@
 
 ### Added
 - Add nix flake deployment
+- `no_redis` frontend config
 
 ### Changed
 - `\clear` will do nothing, `\clear all` will clear all

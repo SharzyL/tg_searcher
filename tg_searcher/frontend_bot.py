@@ -5,6 +5,7 @@ from traceback import format_exc
 from argparse import ArgumentParser
 import shlex
 
+import redis
 import whoosh.index
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import BotCommand, BotCommandScopePeer, BotCommandScopeDefault
@@ -30,12 +31,31 @@ class BotFrontendConfig:
         self.bot_token: str = kw['bot_token']
         self.admin: Union[int, str] = kw['admin_id']
         self.page_len: int = kw.get('page_len', 10)
-        self.redis_host: Tuple[str, int] = self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
+        self.no_redis: bool = kw.get('no_redis', False)
+        self.redis_host: Tuple[str, int] = None if self.no_redis else \
+            self._parse_redis_cfg(kw.get('redis', 'localhost:6379'))
 
         self.private_mode: bool = kw.get('private_mode', False)
         self.private_whitelist: Set[int] = set(kw.get('private_whitelist', []))
         self.private_whitelist.add(self.admin)
 
+
+class FakeRedis:
+    """
+    Sometimes we want a lightweight deployment without using a redis to persist data,
+    FakeRedis provides a in-memory replacement for redis interface
+    """
+    def __init__(self):
+        self._data = {}
+
+    def get(self, key):
+        return self._data.get(key)
+
+    def set(self, key, val):
+        self._data[key] = val
+
+    def ping(self):
+        pass
 
 class BotFrontend:
     """
@@ -59,7 +79,9 @@ class BotFrontend:
             proxy=common_cfg.proxy
         )
         self._cfg = cfg
-        self._redis = Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
+        self._redis: Union[redis.client.Redis, FakeRedis] = FakeRedis() \
+            if cfg.no_redis else \
+            Redis(host=cfg.redis_host[0], port=cfg.redis_host[1], decode_responses=True)
         self._logger = get_logger(f'bot-frontend:{frontend_id}')
         self._admin = None  # to be initialized in start()
         self.username = None

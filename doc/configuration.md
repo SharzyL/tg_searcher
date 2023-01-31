@@ -79,6 +79,7 @@ frontends:
       bot_token: 1200617810:CAF930aE75Vbac02K34tR-A8abzZP4uAq98
       page_len: 10          # 搜索时每页显示的结果数量，默认为 10
       redis: localhost:6379 # Redis 服务器的地址，默认为 localhost:6379
+      no_redis: localhost:6379 # 不使用 Redis 来持久化部分用户数据
 
   - type: bot
     id: private
