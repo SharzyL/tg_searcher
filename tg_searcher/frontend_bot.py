@@ -14,7 +14,7 @@ from telethon.tl.functions.bots import SetBotCommandsRequest
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from .common import CommonBotConfig, get_logger, get_share_id, remove_first_word
+from .common import CommonBotConfig, get_logger, get_share_id, remove_first_word, brief_content
 from .backend_bot import BackendBot, EntityNotFoundError
 from .indexer import SearchResult
 
@@ -119,7 +119,7 @@ class BotFrontend:
         try:
             sb = ['bot 初始化完成\n\n', await self.backend.get_index_status()]
             # TODO: pass structured status message from backend
-            await self.bot.send_message(self._admin, ''.join(sb), parse_mode='html')
+            await self.bot.send_message(self._admin, brief_content(''.join(sb), 4096), parse_mode='html')
         except Exception as e:
             await self.bot.send_message(self._admin, f'Error on get_index_status: {e}')
 
