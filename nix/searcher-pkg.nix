@@ -1,13 +1,10 @@
-{ python3 }:
+{ python3Packages, lib }:
 
-let
-  py = python3.pkgs;
-in
-py.buildPythonApplication {
-  version = "0.1.2";
+python3Packages.buildPythonApplication {
+  version = lib.removeSuffix "\n" (builtins.readFile ../__version__);
   pname = "tg-searcher";
   src = builtins.path { path = ./..; name = "tg-searcher"; };
-  propagatedBuildInputs = with py; [
+  propagatedBuildInputs = with python3Packages; [
     whoosh
     telethon
     jieba
