@@ -14,6 +14,9 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     include_package_data=True,
+    package_data={
+        'tg_searcher': ['../__version__'],
+    },
     author='Sharzy L',
     author_email='me@sharzy.in',
     url='https://github.com/SharzyL/tg_searcher',

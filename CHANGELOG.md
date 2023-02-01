@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## dev
+## [0.4.0] - 2023.2.2
 
 ### Added
 - Add nix flake deployment
