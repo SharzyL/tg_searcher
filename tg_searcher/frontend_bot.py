@@ -428,17 +428,17 @@ class BotFrontend:
         return ''.join(string_builder)
 
     def _render_respond_buttons(self, result, cur_page_num):
-        former_page, former_text = (None, ' ') \
+        former_page, former_text = ('', ' ') \
             if cur_page_num == 1 \
             else (f'search_page={cur_page_num - 1}', '上一页⬅️')
-        next_page, next_text = (None, ' ') \
+        next_page, next_text = ('', ' ') \
             if result.is_last_page \
             else (f'search_page={cur_page_num + 1}', '➡️下一页')
         total_pages = - (- result.total_results // self._cfg.page_len)  # use floor to simulate ceil function
         return [
             [
                 Button.inline(former_text, former_page),
-                Button.inline(f'{cur_page_num} / {total_pages}', None),
+                Button.inline(f'{cur_page_num} / {total_pages}', ''),
                 Button.inline(next_text, next_page),
             ]
         ]
