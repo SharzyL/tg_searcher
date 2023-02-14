@@ -277,7 +277,7 @@ class BotFrontend:
             return
         start_time = time()
         q: str = event.raw_text
-        if q.startswith('/'):
+        if q.startswith('/') or q.startswith('@'):
             first_space = q.find(' ')
             if first_space < 0:
                 first_space = len(q)
