@@ -41,8 +41,14 @@ class BackendBot:
         self._logger.info(f'Init backend bot')
 
         for chat_id in self.monitored_chats:
-            chat_name = await self.translate_chat_id(chat_id)
-            self._logger.info(f'Ready to monitor "{chat_name}" ({chat_id})')
+            try:
+                chat_name = await self.translate_chat_id(chat_id)
+                self._logger.info(f'Ready to monitor "{chat_name}" ({chat_id})')
+            except Exception as e:
+                self._logger.error(f'exception on get monitored chat (id={chat_id}): {e}')
+                self.monitored_chats.remove(chat_id)
+                self._indexer.ix.delete_by_term('chat_id', chat_id)
+                self._logger.error(f'remove chat (id={chat_id}) from monitor list and clear its index')
 
         self._register_hooks()
 
