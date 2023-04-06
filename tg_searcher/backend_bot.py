@@ -66,10 +66,10 @@ class BackendBot:
             return self._indexer.ix.is_empty()
 
     async def download_history(self, chat_id: int, min_id: int, max_id: int, call_back=None):
-        writer = self._indexer.ix.writer()
         share_id = get_share_id(chat_id)
         self._logger.info(f'Downloading history from {share_id} ({min_id=}, {max_id=})')
         self.monitored_chats.add(share_id)
+        msg_list = []
         async for tg_message in self.session.iter_messages(chat_id, min_id=min_id, max_id=max_id):
             if msg_text := self._extract_text(tg_message):
                 url = f'https://t.me/c/{share_id}/{tg_message.id}'
@@ -81,11 +81,16 @@ class BackendBot:
                     post_time=datetime.fromtimestamp(tg_message.date.timestamp()),
                     sender=sender,
                 )
-                self._indexer.add_document(msg, writer)
-                self.newest_msg[share_id] = msg
+                msg_list.append(msg)
                 if call_back:
                     await call_back(tg_message.id)
+        self._logger.info(f'fetching history from {share_id} complete, start writing index')
+        writer = self._indexer.ix.writer()
+        for msg in msg_list:
+            self._indexer.add_document(msg, writer)
+            self.newest_msg[share_id] = msg
         writer.commit()
+        self._logger.info(f'write index commit ok')
 
     def clear(self, chat_ids: Optional[List[int]] = None):
         if chat_ids is not None:
