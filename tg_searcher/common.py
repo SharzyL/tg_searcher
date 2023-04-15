@@ -37,7 +37,7 @@ def brief_content(content: str, trim_len: int = 20) -> str:
         return content[:trim_len - 4] + '…' + content[-2:]
 
 
-def get_share_id(chat_id: int) -> int:
+def get_share_id(chat_id: long) -> long:
     return resolve_id(chat_id)[0]
 
 
