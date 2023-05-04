@@ -18,7 +18,7 @@
             buildInputs = [ searcher-pkg ];
           };
 
-          defaultApp = searcher-pkg;
+          defaultApp = flake-utils.lib.mkApp { drv = searcher-pkg; };
           defaultPackage = searcher-pkg;
         }
       )
