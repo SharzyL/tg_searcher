@@ -36,15 +36,13 @@
             inherit system;
             overlays = [ overlay ];
           };
+          tg-searcher = pkgs.tg-searcher;
         in
-        rec {
-          defaultPackage = pkgs.tg-searcher;
+        {
+          packages.default = tg-searcher;
           legacyPackages = pkgs;
-          devShell = pkgs.mkShell {
-            buildInputs = [ defaultPackage ];
-          };
-
-          defaultApp = flake-utils.lib.mkApp { drv = defaultPackage; };
+          devShells.default = tg-searcher;
+          apps.default = flake-utils.lib.mkApp { drv = tg-searcher; };
         }
       )
     // {
