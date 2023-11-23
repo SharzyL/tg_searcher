@@ -7,27 +7,50 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      overlay = final: prev: {
+        python3 = prev.python3.override {
+          packageOverrides = pfinal: pprev: {
+            telethon = pprev.telethon.overridePythonAttrs (oldAttrs: rec {
+              version = "1.32.1";
+              src = final.fetchFromGitHub {
+                owner = "LonamiWebs";
+                repo = "Telethon";
+                rev = "refs/tags/v${version}";
+                hash = "sha256-0477SxYRVqRnCDPsu+q9zxejCnKVj+qa5DmH0VHuJyI=";
+              };
+              doCheck = false;
+            });
+
+            tg-searcher = pfinal.callPackage ./nix/searcher-pkg.nix { };
+          };
+        };
+        tg-searcher = final.python3Packages.tg-searcher;
+        python3Packages = final.python3.pkgs;
+      };
+    in
     flake-utils.lib.eachDefaultSystem
       (system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
-          searcher-pkg = pkgs.callPackage ./nix/searcher-pkg.nix { };
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ overlay ];
+          };
         in
-        {
+        rec {
+          defaultPackage = pkgs.tg-searcher;
+          legacyPackages = pkgs;
           devShell = pkgs.mkShell {
-            buildInputs = [ searcher-pkg ];
+            buildInputs = [ defaultPackage ];
           };
 
-          defaultApp = flake-utils.lib.mkApp { drv = searcher-pkg; };
-          defaultPackage = searcher-pkg;
+          defaultApp = flake-utils.lib.mkApp { drv = defaultPackage; };
         }
       )
     // {
-      overlays.default = final: prev: {
-        tg-searcher = self.defaultPackage.${prev.system};
-      };
+      overlays.default = overlay;
       nixosModules.default = {
-        nixpkgs.overlays = [ self.overlays.default ];
+        nixpkgs.overlays = [ overlay ];
         imports = [ ./nix/searcher-service.nix ];
       };
     };
