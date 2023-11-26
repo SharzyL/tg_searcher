@@ -9,7 +9,6 @@ COPY . /app
 RUN pip install \
     --no-cache-dir \
     --trusted-host pypi.python.org \
-    --use-feature=in-tree-build \
     --disable-pip-version-check \
     /app
 
