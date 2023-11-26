@@ -48,7 +48,6 @@
     // {
       overlays.default = overlay;
       nixosModules.default = {
-        nixpkgs.overlays = [ overlay ];
         imports = [ ./nix/searcher-service.nix ];
       };
     };

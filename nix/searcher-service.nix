@@ -1,4 +1,4 @@
-{ config, pkgs, lib, self, inputs, ... }:
+{ config, pkgs, lib, ... }:
 
 with lib;
 let
@@ -7,6 +7,8 @@ in
 {
   options.services.tg-searcher = {
     enable = mkEnableOption "Telegram searcher service";
+
+    package = lib.mkPackageOption pkgs "tg-searcher" { };
 
     configFile = mkOption {
       type = types.path;
@@ -33,7 +35,7 @@ in
       after = [ "network.target"  ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        ExecStart = "${pkgs.tg-searcher}/bin/tg-searcher --config ${cfg.configFile}";
+        ExecStart = "${config.package}/bin/tg-searcher --config ${cfg.configFile}";
         User = "tg-searcher";
         StateDirectory = "tg-searcher";
         Restart = "on-failure";

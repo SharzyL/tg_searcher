@@ -100,21 +100,19 @@ tg-searcher 有完善的 nix flake 支持，只需添加对应的 NixOS 模块�
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    searcher = {
-      url = "github:SharzyL/tg_searcher";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    tg-searcher.url = "github:SharzyL/tg_searcher";
   };
 
-  outputs = { self, nixpkgs, searcher }@inputs: {
+  outputs = { self, nixpkgs, tg-searcher }@inputs: {
     nixosConfigurations.your-hostname = let
       system = "x86_64-linux";
     in
     nixpkgs.lib.nixosSystem {
       inherit system;
       modules = [
-        searcher.nixosModules.default
+        tg-searcher.nixosModules.default
         {
+          nixpkgs.overlays = [ tg-searcher.overlays.default ];
           services.tg-searcher = {
             enable = true;
             configFile = "/path/to/searcher.yml";
