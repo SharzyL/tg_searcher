@@ -9,24 +9,7 @@
   outputs = { self, nixpkgs, flake-utils }:
     let
       overlay = final: prev: {
-        python3 = prev.python3.override {
-          packageOverrides = pfinal: pprev: {
-            telethon = pprev.telethon.overridePythonAttrs (oldAttrs: rec {
-              version = "1.32.1";
-              src = final.fetchFromGitHub {
-                owner = "LonamiWebs";
-                repo = "Telethon";
-                rev = "refs/tags/v${version}";
-                hash = "sha256-0477SxYRVqRnCDPsu+q9zxejCnKVj+qa5DmH0VHuJyI=";
-              };
-              doCheck = false;
-            });
-
-            tg-searcher = pfinal.callPackage ./nix/searcher-pkg.nix { };
-          };
-        };
-        tg-searcher = final.python3Packages.tg-searcher;
-        python3Packages = final.python3.pkgs;
+        tg-searcher = final.python3.pkgs.callPackage ./nix/searcher-pkg.nix { };
       };
     in
     flake-utils.lib.eachDefaultSystem
