@@ -35,7 +35,7 @@ in
       after = [ "network.target"  ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        ExecStart = "${config.package}/bin/tg-searcher --config ${cfg.configFile}";
+        ExecStart = "${cfg.package}/bin/tg-searcher --config ${cfg.configFile}";
         User = "tg-searcher";
         StateDirectory = "tg-searcher";
         Restart = "on-failure";
