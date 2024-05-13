@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## dev
+## [0.5.0] - 2024.5.14
 ### Fixed
 - Handle exception that occurs when backend init trys to find a deleted chat
 
