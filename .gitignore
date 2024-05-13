@@ -6,3 +6,6 @@
 __pycache__
 *.egg-info
 /.direnv
+.envrc
+.pdm-python
+.pdm-build

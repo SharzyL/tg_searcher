@@ -1,23 +1,23 @@
-FROM python:3.9 AS BUILDER
-# Because cryptg builds some native library
-# use multi-stage build reduce image size
+ARG PYTHON_BASE=3.9-slim
+FROM python:$PYTHON_BASE AS builder
 
-WORKDIR /app
+# install PDM
+RUN pip install -U pdm
+ENV PDM_CHECK_UPDATE=false
+COPY pyproject.toml pdm.lock README.md /project/
+COPY tg_searcher /project/tg_searcher
 
-COPY . /app
+# install dependencies and project into the local packages directory
+WORKDIR /project
+RUN pdm install --check --prod --no-editable
 
-RUN pip install \
-    --no-cache-dir \
-    --trusted-host pypi.python.org \
-    --disable-pip-version-check \
-    /app
+# run stage
+FROM python:$PYTHON_BASE
 
-FROM python:3.9-slim
+# retrieve packages from build stage
+COPY --from=builder /project/.venv/ /project/.venv
+ENV PATH="/project/.venv/bin:$PATH"
+COPY tg_searcher /project/tg_searcher
+WORKDIR /project
+CMD ["python", "tg_searcher/__main__.py"]
 
-RUN mkdir /usr/local/lib/python3.9 -p
-COPY --from=BUILDER \
-    /usr/local/lib/python3.9/site-packages \
-    /usr/local/lib/python3.9/site-packages
-
-ENTRYPOINT ["python", "-m", "tg_searcher"]
-CMD ["-f", "./config/searcher.yaml"]

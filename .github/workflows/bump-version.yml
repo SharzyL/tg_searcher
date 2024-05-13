@@ -9,19 +9,18 @@ jobs:
   push_to_pypi:
     name: Push package to PyPI
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Check version
         run: bash .github/workflows/check_version.sh
 
-      - name: Build and upload package
-        run: |
-          python3 -m pip install build twine
-          python3 -m build .
-          python3 -m twine upload --non-interactive --skip-existing dist/*
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TWINE_TOKEN }}
+      - uses: pdm-project/setup-pdm@v3
+
+      - name: Publish package distributions to PyPI
+        run: pdm publish
 

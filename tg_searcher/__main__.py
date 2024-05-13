@@ -1,3 +1,3 @@
-from .main import main
+from tg_searcher.main import main
 
 main()

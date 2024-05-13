@@ -6,6 +6,7 @@
 
 ### Changed
 - When downloding history, now the backend will store all messages in memory and write them to index at once, to avoid blocking regular update
+- Use PDM package manager
 
 ## [0.4.0] - 2023.2.2
 

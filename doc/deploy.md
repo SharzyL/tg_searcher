@@ -2,11 +2,11 @@
 
 我们提供了三种部署的方法：手动部署，使用 docker-compose 部署和 nix flake 部署。
 
-## 手动运行
+## 手动运行（使用 PDM）
 
 1. 安装 Redis 并运行（可以按照[这里](https://redis.io/topics/quickstart)的操作指示）。
 
-2. 确保 python 版本在 3.7 或以上。
+2. 安装 PDM 包管理器（参考[官方文档](https://pdm-project.org/en/latest/#installation)）。
 
 ```shell script
 # install from pip
@@ -15,12 +15,17 @@ python3 -m pip install -U tg-searcher
 # or install from github
 python3 -m pip install -U git+https://github.com/SharzyL/tg_searcher
 
-# or install locally
+# or install locally, using PDM package manager
 git clone https://github.com/SharzyL/tg_searcher && cd tg_searcher
 python3 -m pip install -e .
 ```
 
-参考 [configuration.md](./configuration.md) 填写配置文件之后，运行 `python3 -m tg_searcher -f /path/to/config.yaml` 即可。如果 pip 安装可执行文件的目录在 `PATH` 中，也可以直接 `tg-searcher -f /path/to/config.yaml`。
+3. 参考 [configuration.md](./configuration.md) 填写配置文件之后，
+```console
+$ pdm install
+
+$ pdm run start -f /path/to/config.yaml
+```
 
 首次运行时需要填写验证码（如果设置了两步验证，还需填写密码）。运行成功后 bot 会在 Telegram 中向管理员发送一条包含服务器状态的消息。
 

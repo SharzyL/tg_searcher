@@ -1,0 +1,50 @@
+[project]
+name = "tg-searcher"
+dynamic = [ "version" ]
+description = "Telegram searcher bot for Chinese"
+readme = "README.md"
+authors = [
+    {name = "SharzyL", email = "me@sharzy.in"},
+]
+dependencies = [
+    "Telethon<2.0.0,>=1.32.0",
+    "python-socks<3.0.0,>=2.4.4",
+    "cryptg<1.0.0,>=0.4.0",
+    "async-timeout<5.0.0,>=4.0.3",
+    "jieba>=0.42.1",
+    "pyyaml>=6.0.1",
+    "redis>=5.0.3",
+    "whoosh>=2.7.4",
+]
+requires-python = "<4.0,>=3.9"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Topic :: Communications :: Chat",
+    "Topic :: Utilities"
+]
+
+[project.urls]
+changelog = "https://github.com/SharzyL/tg_searcher/blob/master/CHANGELOG.md"
+homepage = "https://github.com/SharzyL/tg_searcher"
+repository = "https://github.com/SharzyL/tg_searcher.git"
+
+[project.scripts]
+tg-searcher = "tg_searcher:main"
+
+[tool.pdm.scripts]
+start = { call = "tg_searcher:main" }
+
+[tool.pdm.version]
+source = "file"
+path = "tg_searcher/__init__.py"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
