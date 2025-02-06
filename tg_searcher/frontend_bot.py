@@ -11,6 +11,7 @@ from telethon import TelegramClient, events, Button
 from telethon.tl.types import BotCommand, BotCommandScopePeer, BotCommandScopeDefault
 from telethon.tl.custom import Message as TgMessage
 from telethon.tl.functions.bots import SetBotCommandsRequest
+import telethon.errors.rpcerrorlist as rpcerrorlist
 from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 
@@ -317,10 +318,14 @@ class BotFrontend:
             nonlocal prog_msg, cnt
             remaining_msg_cnt = msg_id - min_id
 
-            if cnt % 100 == 0:
+            if cnt % 500 == 0:
                 prog_text = f'{chat_html}: 还需下载大约 {remaining_msg_cnt} 条消息'
                 if prog_msg is not None:
-                    await prog_msg.edit(prog_text, parse_mode='html')
+                    try:
+                        await prog_msg.edit(prog_text, parse_mode='html')
+                    except rpcerrorlist.FloodWaitError:
+                        self._logger.info(f'FloodWaitError when trying to edit message of download_history ({cnt=}), ignore')
+                        pass
                 else:
                     prog_msg = await event.reply(prog_text, parse_mode='html')
             cnt += 1
