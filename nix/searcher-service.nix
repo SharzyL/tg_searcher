@@ -11,7 +11,7 @@ in
     package = lib.mkPackageOption pkgs "tg-searcher" { };
 
     configFile = mkOption {
-      type = types.path;
+      type = types.str;
     };
 
     redis = mkOption {
@@ -25,11 +25,6 @@ in
   };
 
   config = mkIf cfg.enable {
-    users.users.tg-searcher = {
-      isNormalUser = true;
-      description = "searcher daemon user";
-    };
-
     systemd.services.tg-searcher = {
       description = "Telegram searcher service";
       after = [ "network.target"  ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
@@ -41,7 +36,42 @@ in
         Restart = "on-failure";
         ReadOnlyPaths = "/";
         ReadWritePaths = "%S/tg-searcher";
+
+        # hardening
+        RemoveIPC = true;
+        ProtectSystem = "strict";
         PrivateTmp = true;
+        NoNewPrivileges = true;
+        RestrictSUIDSGID = true;
+        ProtectHome = true;
+        UMask = "0077";
+
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        ProcSubset = "pid";
+        PrivateUsers = true;
+        PrivateDevices = true;
+
+        ProtectControlGroups = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        ProtectClock = true;
+        ProtectKernelLogs = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        RestrictNamespaces = true;
+
+        SystemCallArchitectures = "native";
+
+        DynamicUser = true; # implies RemoveIPC, ProtectSystem, PrivateTmp, NoNewPrivileges, RestrictSUIDSGID
+        MemoryDenyWriteExecute = true;
+
+        CapabilityBoundingSet = [];
+        AmbientCapabilities = [];
+
+        SystemCallFilter = [ "@system-service" ];
+
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
       };
     };
 
