@@ -17,7 +17,7 @@ class BackendBotConfig:
     def __init__(self, **kw):
         self.monitor_all = kw.get('monitor_all', False)
         self.excluded_chats: Set[int] = set(get_share_id(chat_id)
-                                            for chat_id in kw.get('exclude_chats', []))
+                                            for chat_id in kw.get('excluded_chats', []))
 
 
 class BackendBot:
