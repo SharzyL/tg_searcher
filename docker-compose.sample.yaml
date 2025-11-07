@@ -15,6 +15,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./config:/app/config
+    environment:
+      - TZ=Asia/Shanghai
     depends_on:
       - redis
     stdin_open: true  # once you've logged in, can be commented out 登入后可以注释掉
