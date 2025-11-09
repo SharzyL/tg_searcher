@@ -1,4 +1,4 @@
-ARG PYTHON_BASE=3.9-slim
+ARG PYTHON_BASE=3.12
 FROM python:$PYTHON_BASE AS builder
 
 # install PDM

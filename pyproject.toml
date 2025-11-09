@@ -7,13 +7,13 @@ authors = [
     {name = "SharzyL", email = "me@sharzy.in"},
 ]
 dependencies = [
-    "Telethon<2.0.0,>=1.32.0",
-    "python-socks<3.0.0,>=2.4.4",
-    "cryptg<1.0.0,>=0.4.0",
-    "async-timeout<6.0.0,>=5.0.1",
+    "Telethon<2.0.0,>=1.42.0",
+    "python-socks>=2.7.2",
+    "cryptg>=0.5.2",
+    "async-timeout>=5.0.1",
     "jieba>=0.42.1",
-    "pyyaml>=6.0.1",
-    "redis>=5.0.3",
+    "pyyaml>=6.0.3",
+    "redis>=7.0.1",
     "whoosh>=2.7.4",
 ]
 requires-python = "<4.0,>=3.9"
