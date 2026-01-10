@@ -15,10 +15,21 @@ from .common import CommonBotConfig
 
 async def a_main():
     parser = ArgumentParser(description='A server to provide Telegram message searching')
-    parser.add_argument('-c', '--clear', action='store_const', const=True, default=False,
-                        help='Clear existing index')
-    parser.add_argument('-f', '--config', action='store', default='searcher.yaml',
-                        help='Specify where the configuration yaml file lies')
+    parser.add_argument(
+        '-c',
+        '--clear',
+        action='store_const',
+        const=True,
+        default=False,
+        help='Clear existing index',
+    )
+    parser.add_argument(
+        '-f',
+        '--config',
+        action='store',
+        default='searcher.yaml',
+        help='Specify where the configuration yaml file lies',
+    )
     parser.add_argument('--debug', action='store_true', help='set loglevel to DEBUG')
     args = parser.parse_args()
 
@@ -50,7 +61,13 @@ async def a_main():
         backend_id = backend_yaml['id']
         session_name = backend_yaml['use_session']
         backend_config = BackendBotConfig(**backend_yaml.get('config', {}))
-        backend = BackendBot(common_config, backend_config, sessions[session_name], args.clear, backend_id)
+        backend = BackendBot(
+            common_config,
+            backend_config,
+            sessions[session_name],
+            args.clear,
+            backend_id,
+        )
         async_tasks.append(backend.start())
         if backend_id not in backends:
             backends[backend_id] = backend
@@ -61,8 +78,12 @@ async def a_main():
         backend_id = frontend_yaml['use_backend']
         frontend_id = frontend_yaml['id']
         frontend_config = BotFrontendConfig(**frontend_yaml.get('config', {}))
-        frontend = BotFrontend(common_config, frontend_config,
-                               frontend_id=frontend_id, backend=backends[backend_id])
+        frontend = BotFrontend(
+            common_config,
+            frontend_config,
+            frontend_id=frontend_id,
+            backend=backends[backend_id],
+        )
         async_tasks.append(frontend.start())
         if frontend_id not in frontends:
             frontends[frontend_id] = frontend

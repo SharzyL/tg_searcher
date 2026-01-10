@@ -27,7 +27,7 @@ in
   config = mkIf cfg.enable {
     systemd.services.tg-searcher = {
       description = "Telegram searcher service";
-      after = [ "network.target"  ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
+      after = [ "network.target" ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/tg-searcher --config ${cfg.configFile}";
@@ -66,8 +66,8 @@ in
         DynamicUser = true; # implies RemoveIPC, ProtectSystem, PrivateTmp, NoNewPrivileges, RestrictSUIDSGID
         MemoryDenyWriteExecute = true;
 
-        CapabilityBoundingSet = [];
-        AmbientCapabilities = [];
+        CapabilityBoundingSet = [ ];
+        AmbientCapabilities = [ ];
 
         SystemCallFilter = [ "@system-service" ];
 

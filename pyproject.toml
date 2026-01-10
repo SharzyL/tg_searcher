@@ -1,19 +1,19 @@
 [project]
 name = "tg-searcher"
-dynamic = [ "version" ]
+version = "0.5.0"
 description = "Telegram searcher bot for Chinese"
 readme = "README.md"
 authors = [
     {name = "SharzyL", email = "me@sharzy.in"},
 ]
 dependencies = [
-    "Telethon<2.0.0,>=1.42.0",
+    "Telethon<2.0.0,>=1.41.0",
     "python-socks>=2.7.2",
     "cryptg>=0.5.2",
     "async-timeout>=5.0.1",
     "jieba>=0.42.1",
     "pyyaml>=6.0.3",
-    "redis>=7.0.1",
+    "redis<7.0.0,>=6.2.0",
     "whoosh>=2.7.4",
 ]
 requires-python = "<4.0,>=3.9"
@@ -37,14 +37,15 @@ repository = "https://github.com/SharzyL/tg_searcher.git"
 [project.scripts]
 tg-searcher = "tg_searcher:main"
 
-[tool.pdm.scripts]
-start = { call = "tg_searcher:main" }
-
-[tool.pdm.version]
-source = "file"
-path = "tg_searcher/__init__.py"
-
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["uv_build"]
+build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.format]
+quote-style = "single"

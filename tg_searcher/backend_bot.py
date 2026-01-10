@@ -8,21 +8,33 @@ from telethon.tl.patched import Message as TgMessage
 from telethon.tl.types import User
 
 from .indexer import Indexer, IndexMsg
-from .common import CommonBotConfig, escape_content, get_share_id, get_logger, format_entity_name, brief_content, \
-    EntityNotFoundError
+from .common import (
+    CommonBotConfig,
+    escape_content,
+    get_share_id,
+    get_logger,
+    format_entity_name,
+    brief_content,
+    EntityNotFoundError,
+)
 from .session import ClientSession
 
 
 class BackendBotConfig:
     def __init__(self, **kw):
         self.monitor_all = kw.get('monitor_all', False)
-        self.excluded_chats: Set[int] = set(get_share_id(chat_id)
-                                            for chat_id in kw.get('excluded_chats', []))
+        self.excluded_chats: Set[int] = set(get_share_id(chat_id) for chat_id in kw.get('excluded_chats', []))
 
 
 class BackendBot:
-    def __init__(self, common_cfg: CommonBotConfig, cfg: BackendBotConfig,
-                 session: ClientSession, clean_db: bool, backend_id: str):
+    def __init__(
+        self,
+        common_cfg: CommonBotConfig,
+        cfg: BackendBotConfig,
+        session: ClientSession,
+        clean_db: bool,
+        backend_id: str,
+    ):
         self.id: str = backend_id
         self.session = session
 
@@ -196,7 +208,7 @@ class BackendBot:
                     url=url,
                     chat_id=share_id,
                     post_time=datetime.fromtimestamp(event.date.timestamp()),
-                    sender=sender
+                    sender=sender,
                 )
                 self.newest_msg[share_id] = msg
                 self._indexer.add_document(msg)

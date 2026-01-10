@@ -1,7 +1,6 @@
 { buildPythonPackage
-, fetchFromGitHub
 , lib
-, pdm-backend
+, uv-build
 
 , whoosh
 , telethon
@@ -12,25 +11,13 @@
 , cryptg
 }:
 
-let
-  telethon_1_35 = telethon.overridePythonAttrs (oldAttrs: rec {
-    version = "1.35.1";
-    src = fetchFromGitHub {
-      owner = "LonamiWebs";
-      repo = "Telethon";
-      rev = "refs/tags/v${version}";
-      hash = "sha256-expJdVvR8yxVC1e+v/hH81TKZ1HJceWBv6BqD15aOFU=";
-    };
-    doCheck = false;
-  });
-in
 buildPythonPackage {
   version = lib.head
-    (builtins.match ".*__version__ = \"([0-9.]+)\".*"
+    (builtins.match ".*__version__ = '([0-9.]+)'.*"
       (builtins.readFile ./../tg_searcher/__init__.py));
 
   pyproject = true;
-  nativeBuildInputs = [ pdm-backend ];
+  nativeBuildInputs = [ uv-build ];
 
   pname = "tg-searcher";
 
@@ -41,7 +28,7 @@ buildPythonPackage {
 
   propagatedBuildInputs = [
     whoosh
-    telethon_1_35
+    telethon
     jieba
     python-socks
     pyyaml

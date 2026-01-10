@@ -27,14 +27,14 @@ def remove_first_word(text: str) -> str:
     if first_space < 0:
         return ''
     else:
-        return text[first_space + 1:]
+        return text[first_space + 1 :]
 
 
 def brief_content(content: str, trim_len: int = 20) -> str:
     if len(content) < trim_len:
         return content
     else:
-        return content[:trim_len - 4] + '…' + content[-2:]
+        return content[: trim_len - 4] + '…' + content[-2:]
 
 
 def get_share_id(chat_id: int) -> int:
@@ -57,7 +57,7 @@ class CommonBotConfig:
     def _parse_proxy(proxy_str: str):
         url = url_parse.urlparse(proxy_str)
         if url.username and url.password:
-            # For backwards compatibility with PySocks 
+            # For backwards compatibility with PySocks
             # (proxy_type, addr, port, rdns, username, password)
             # https://docs.telethon.dev/en/stable/basic/signing-in.html#signing-in-behind-a-proxy
             return url.scheme, url.hostname, url.port, True, url.username, url.password

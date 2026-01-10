@@ -23,7 +23,14 @@ class IndexMsg:
         sender=TEXT(stored=True),
     )
 
-    def __init__(self, content: str, url: str, chat_id: Union[int, str], post_time: datetime, sender: str):
+    def __init__(
+        self,
+        content: str,
+        url: str,
+        chat_id: Union[int, str],
+        post_time: datetime,
+        sender: str,
+    ):
         self.content = content
         self.url = url
         self.chat_id = int(chat_id)
@@ -36,7 +43,7 @@ class IndexMsg:
             'url': self.url,
             'chat_id': str(self.chat_id),
             'post_time': self.post_time,
-            'sender': self.sender
+            'sender': self.sender,
         }
 
     def __str__(self):
@@ -69,6 +76,7 @@ class Indexer:
 
         def _clear():
             import shutil
+
             shutil.rmtree(index_dir)
             index_dir.mkdir()
             self.ix = index.create_in(index_dir, IndexMsg.schema, index_name)
@@ -76,14 +84,17 @@ class Indexer:
         if from_scratch:
             _clear()
 
-        self.ix = index.open_dir(index_dir, index_name) \
-            if index.exists_in(index_dir, index_name) \
+        self.ix = (
+            index.open_dir(index_dir, index_name)
+            if index.exists_in(index_dir, index_name)
             else index.create_in(index_dir, IndexMsg.schema, index_name)
+        )
 
-        assert repr(self.ix.schema.names) == repr(IndexMsg.schema.names), \
-            f"Incompatible schema in your index '{index_dir}'\n" \
-            f"\tExpected: {IndexMsg.schema}\n" \
-            f"\tOn disk:  {self.ix.schema}"
+        assert repr(self.ix.schema.names) == repr(IndexMsg.schema.names), (
+            f"Incompatible schema in your index '{index_dir}'\n"
+            f'\tExpected: {IndexMsg.schema}\n'
+            f'\tOn disk:  {self.ix.schema}'
+        )
 
         self._clear = _clear  # use closure to avoid introducing too much members
         self.query_parser = QueryParser('content', IndexMsg.schema)
@@ -101,15 +112,26 @@ class Indexer:
             with self.ix.writer() as writer:
                 writer.add_document(**message.as_dict())
 
-    def search(self, q_str: str, in_chats: Optional[List[int]], page_len: int, page_num: int = 1) -> SearchResult:
+    def search(
+        self,
+        q_str: str,
+        in_chats: Optional[List[int]],
+        page_len: int,
+        page_num: int = 1,
+    ) -> SearchResult:
         q = self.query_parser.parse(q_str)
         with self.ix.searcher() as searcher:
             q_filter = in_chats and Or([Term('chat_id', str(chat_id)) for chat_id in in_chats])
-            result_page = searcher.search_page(q, page_num, page_len, filter=q_filter,
-                                               sortedby='post_time', reverse=True)
+            result_page = searcher.search_page(
+                q,
+                page_num,
+                page_len,
+                filter=q_filter,
+                sortedby='post_time',
+                reverse=True,
+            )
 
-            hits = [SearchHit(IndexMsg(**msg), self.highlighter.highlight_hit(msg, 'content'))
-                    for msg in result_page]
+            hits = [SearchHit(IndexMsg(**msg), self.highlighter.highlight_hit(msg, 'content')) for msg in result_page]
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
 
     def list_indexed_chats(self) -> Set[int]:
