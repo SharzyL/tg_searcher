@@ -64,7 +64,8 @@ class CommonBotConfig:
         return url.scheme, url.hostname, url.port
 
     def __init__(self, cfg: dict):
-        self.proxy: Optional[tuple] = cfg.get('proxy') and self._parse_proxy(cfg.get('proxy'))
+        proxy_cfg = cfg.get('proxy')
+        self.proxy: Optional[tuple] = self._parse_proxy(proxy_cfg) if proxy_cfg else None
         self.api_id: int = cfg['api_id']
         self.api_hash: str = cfg['api_hash']
         self.name: str = cfg['name']

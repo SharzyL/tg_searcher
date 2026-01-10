@@ -47,7 +47,7 @@ class IndexMsg:
         }
 
     def __str__(self):
-        return f'IndexMsg' + ', '.join(f'{k}={repr(v)}' for k, v in self.as_dict().items())
+        return 'IndexMsg' + ', '.join(f'{k}={repr(v)}' for k, v in self.as_dict().items())
 
 
 class SearchHit:
@@ -135,7 +135,9 @@ class Indexer:
             return SearchResult(hits, result_page.is_last_page(), result_page.total)
 
     def list_indexed_chats(self) -> Set[int]:
-        with self.ix.reader() as r:
+        reader = self.ix.reader()
+        assert reader is not None
+        with reader as r:
             return set(int(chat_id) for chat_id in r.field_terms('chat_id'))
 
     def count_by_query(self, **kw):

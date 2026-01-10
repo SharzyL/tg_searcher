@@ -1,15 +1,15 @@
-ARG PYTHON_BASE=3.12
+ARG PYTHON_BASE=3.13
 FROM python:$PYTHON_BASE AS builder
 
 # install PDM
-RUN pip install -U pdm
+RUN pip install -U uv
 ENV PDM_CHECK_UPDATE=false
-COPY pyproject.toml pdm.lock README.md /app/
+COPY pyproject.toml uv.lock README.md /app/
 COPY tg_searcher /app/tg_searcher
 
 # install dependencies and project into the local packages directory
 WORKDIR /app
-RUN pdm install --check --prod --no-editable
+RUN uv sync
 
 # run stage
 FROM python:$PYTHON_BASE

@@ -5,7 +5,6 @@ from argparse import ArgumentParser
 from pathlib import Path
 import asyncio
 
-from telethon.client import TelegramClient
 
 from .frontend_bot import BotFrontend, BotFrontendConfig
 from .backend_bot import BackendBot, BackendBotConfig
@@ -93,10 +92,11 @@ async def a_main():
     for task in async_tasks:
         await task
 
-    logging.info(f'Initialization ok')
+    logging.info('Initialization ok')
     assert len(frontends) > 0
     for frontend in frontends.values():
-        await frontend.bot.run_until_disconnected()
+        # Telethon's type stubs don't properly annotate run_until_disconnected() as async
+        await frontend.bot.run_until_disconnected()  # type: ignore
 
 
 def main():

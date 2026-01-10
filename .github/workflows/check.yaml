@@ -1,0 +1,24 @@
+name: Nix Flake Check
+
+on:
+  push:
+    branches: [ goshujin ]
+  pull_request:
+    branches: [ goshujin ]
+
+jobs:
+  nix-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Check Nix flake
+        run: |
+          nix build
+          nix flake check
+          nix develop -c pyright tg_searcher

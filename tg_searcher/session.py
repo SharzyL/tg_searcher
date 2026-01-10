@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Union, cast, Any
 
 from telethon.client import TelegramClient
 
@@ -12,10 +12,11 @@ class ClientSession(TelegramClient):
         self._logger = get_logger(f'session:{name}')
         self._id_to_title_table: Dict[int, str] = dict()
 
-    async def start(self, *args, **argv) -> 'TelegramClient':
+    async def start(self, *args, **argv):  # type: ignore
+        # TelegramClient.start() can be sync or async depending on parameters
         ret = super().start(*args, **argv)
         if hasattr(ret, '__await__'):
-            ret = await ret
+            ret = await cast(Any, ret)
         await self.refresh_translate_table()
         return ret
 
@@ -29,18 +30,19 @@ class ClientSession(TelegramClient):
             self._id_to_title_table[chat_id] = format_entity_name(entity)
         return self._id_to_title_table[chat_id]
 
-    async def str_to_chat_id(self, chat: str) -> int:
+    async def str_to_chat_id(self, chat: Union[int, str]) -> int:
         try:
             return int(chat)
         except ValueError:
             try:
                 entity = await self.get_entity(chat)
+                assert not isinstance(entity, list)
             except ValueError:
                 raise EntityNotFoundError(chat)
             return get_share_id(entity.id)
 
     async def refresh_translate_table(self):
-        self._logger.info(f'Start iterating dialogs')
+        self._logger.info('Start iterating dialogs')
         self._id_to_title_table.clear()
         async for dialog in self.iter_dialogs(ignore_migrated=True):
             self._id_to_title_table[dialog.entity.id] = dialog.name
