@@ -1,0 +1,38 @@
+[package]
+name = "tg-searcher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.54", features = ["derive"] }
+dashmap = "6.1.0"
+grammers-client = { version = "0.8.1", features = ["html"] }
+grammers-mtsender = { version = "0.8.1", features = ["proxy"] }
+grammers-session = "0.8.0"
+grammers-tl-types = "0.8.0"
+html-escape = "0.2.13"
+jieba-rs = "0.8.1"
+rand = "0.9.2"
+rpassword = "7.3.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9.34"
+shell-words = "1.1.1"
+tantivy = { version = "0.25.0", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
+thiserror = "2.0.17"
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
+tokio-socks = "0.5.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3.24.0"
+tokio = { version = "1.49.0", features = ["test-util"] }
+
+[profile.release]
+opt-level = "s"
+codegen-units = 1
+lto = "thin"
+

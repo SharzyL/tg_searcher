@@ -9,3 +9,12 @@ __pycache__
 .envrc
 .pdm-python
 .pdm-build
+/target
+
+# Runtime data
+tg_searcher_data/
+*.session
+
+# Actual config (keep .example)
+searcher.yaml
+!searcher.yaml.example

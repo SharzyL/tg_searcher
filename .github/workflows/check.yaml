@@ -2,7 +2,7 @@ name: Nix Flake Check
 
 on:
   push:
-    branches: [ goshujin ]
+    branches: [ goshujin, riir ]
   pull_request:
     branches: [ goshujin ]
 
@@ -21,4 +21,4 @@ jobs:
         run: |
           nix build
           nix flake check
-          nix develop -c pyright tg_searcher
+          nix develop -c cargo clippy -- -D warnings

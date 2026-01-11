@@ -1,0 +1,53 @@
+# TG Searcher Configuration Example
+#
+# Copy this file to searcher.yaml and fill in your values
+
+common:
+  # Telegram API credentials (get from https://my.telegram.org)
+  api_id: 12345678
+  api_hash: "your_api_hash_here"
+
+  # Runtime directory for storing sessions and indexes
+  runtime_dir: "./tg_searcher_data"
+
+  # Optional: SOCKS5 proxy
+  # proxy: "socks5://localhost:1080"
+  # proxy: "socks5://user:pass@proxy.example.com:1080"
+
+# User sessions (normal Telegram accounts)
+sessions:
+  - name: "my_session"
+    phone: "+1234567890"
+
+# Backend bots (message indexing)
+backends:
+  - id: "backend1"
+    use_session: "my_session"
+    config:
+      # Monitor all chats except excluded ones
+      monitor_all: false
+
+      # Chat IDs to exclude from monitoring (when monitor_all is true)
+      excluded_chats: []
+      # excluded_chats: [-1001234567890, -1009876543210]
+
+# Frontend bots (user interaction)
+frontends:
+  - id: "frontend1"
+    use_backend: "backend1"
+    config:
+      # Bot token from @BotFather
+      bot_token: "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+      # Admin user ID (can use @userinfobot to get your ID)
+      admin_id: 123456789
+
+      # Results per page
+      page_len: 10
+
+      # Private mode (only allow whitelisted users)
+      private_mode: false
+
+      # Whitelisted user IDs (when private_mode is true)
+      private_whitelist: []
+      # private_whitelist: [123456789, 987654321]
