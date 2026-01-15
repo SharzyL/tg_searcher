@@ -721,16 +721,22 @@ impl BotFrontend {
 
         let mut i = 1; // Skip command itself
         while i < args.len() {
-            if args[i] == "--min" && i + 1 < args.len() {
-                min_id = args[i + 1].parse().ok();
-                i += 2;
-            } else if args[i] == "--max" && i + 1 < args.len() {
-                max_id = args[i + 1].parse().ok();
-                i += 2;
-            } else {
-                chat_args.push(args[i].clone());
+            let arg = args[i].as_str();
+
+            // Telegram-friendly forms: min=123 max=456
+            if let Some(v) = arg.strip_prefix("min=") {
+                min_id = v.parse().ok();
                 i += 1;
+                continue;
             }
+            if let Some(v) = arg.strip_prefix("max=") {
+                max_id = v.parse().ok();
+                i += 1;
+                continue;
+            }
+
+            chat_args.push(args[i].clone());
+            i += 1;
         }
 
         // Get chat IDs
@@ -769,7 +775,7 @@ impl BotFrontend {
                     To download history:\n\
                     1. Use /clear {} first to remove existing index, OR\n\
                     2. Specify min_id or max_id to download specific range\n\n\
-                    Example: /download_chat {} --min 12345",
+                    Example: /download_chat {} min=12345",
                     target_chat_id, target_chat_id, target_chat_id
                 );
                 self.send_message(chat_id, &warning, None).await?;

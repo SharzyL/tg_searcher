@@ -159,7 +159,7 @@ On first run:
 #### Admin Commands (Admin Only)
 
 - `/stat` - Show index statistics
-- `/download_chat [--min N] [--max N] [CHAT...]` - Download and index chat history
+- `/download_chat [min=N] [max=N] [CHAT...]` - Download and index chat history
 - `/monitor_chat [CHAT...]` - Add chat to monitoring list
 - `/clear [all|CHAT...]` - Clear index (all or specific chats)
 - `/find_chat_id <keyword>` - Find chat IDs by name
