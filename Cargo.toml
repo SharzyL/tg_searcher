@@ -34,5 +34,3 @@ tokio = { version = "1.49.0", features = ["test-util"] }
 [profile.release]
 opt-level = "s"
 codegen-units = 1
-lto = "thin"
-
