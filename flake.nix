@@ -10,7 +10,7 @@
 
   outputs = { flake-parts, ... }@inputs:
     let
-      name = "tg_searcher";
+      name = "tg-searcher";
       makePkg = { lib, rustPlatform, rustc, cargo, runCommand }:
         rustPlatform.buildRustPackage {
           inherit name;
@@ -29,7 +29,7 @@
             ln -s ${rustPlatform.rustLibSrc} $out/src
           '';
 
-          cargoHash = "sha256-bqTOlkW5wZcsqfxa1Hu+DVUs/hBlsI9oaM0umj8NORQ=";
+          cargoHash = "sha256-rwUNBN6gf94p+L3TgfNYwsjNOxQjI5PxxdEtJk5nwaU=";
           meta.mainProgram = name;
         };
 
@@ -56,6 +56,7 @@
       ];
 
       flake.overlays.default = overlay;
+      flake.nixosModules.default = import ./nix/searcher-service.nix;
 
       systems = inputs.nixpkgs.lib.systems.flakeExposed;
 

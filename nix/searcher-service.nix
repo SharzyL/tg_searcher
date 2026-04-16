@@ -13,21 +13,12 @@ in
     configFile = mkOption {
       type = types.str;
     };
-
-    redis = mkOption {
-      type = types.submodule {
-        options = {
-          enable = mkEnableOption "Redis server for tg-searcher";
-          port = mkOption { type = types.port; default = 6379; };
-        };
-      };
-    };
   };
 
   config = mkIf cfg.enable {
     systemd.services.tg-searcher = {
       description = "Telegram searcher service";
-      after = [ "network.target" ] ++ (lib.optional cfg.redis.enable "redis-searcher.service");
+      after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/tg-searcher --config ${cfg.configFile}";
@@ -73,11 +64,6 @@ in
 
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
       };
-    };
-
-    services.redis.servers.searcher = mkIf cfg.redis.enable {
-      enable = true;
-      port = 6379;
     };
   };
 }
