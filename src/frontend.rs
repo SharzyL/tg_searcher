@@ -17,7 +17,7 @@ use grammers_client::client::UpdatesConfiguration;
 use grammers_client::types::update::{CallbackQuery, Update};
 use grammers_client::{Client, InputMessage, button, reply_markup};
 use grammers_mtsender::{ConnectionParams, SenderPool};
-use grammers_session::defs::PeerId;
+use grammers_session::defs::{PeerId, PeerKind};
 use grammers_tl_types as tl;
 use std::sync::Arc;
 use std::time::Instant;
@@ -277,7 +277,9 @@ impl BotFrontend {
         }
 
         // Get chat info - use peer_id().bot_api_dialog_id() like in backend
-        let chat_id = message.peer_id().bot_api_dialog_id();
+        let peer_id = message.peer_id();
+        let chat_id = peer_id.bot_api_dialog_id();
+        let is_private = peer_id.kind() == PeerKind::User;
 
         // Get sender info
         let sender_id = if let Some(sender_peer) = message.sender() {
@@ -300,9 +302,11 @@ impl BotFrontend {
 
         // Route to admin or normal handler, catch errors and send to user
         let result = if sender_id == self.admin_id {
-            self.handle_admin_message(chat_id, text, reply_to).await
+            self.handle_admin_message(chat_id, is_private, text, reply_to)
+                .await
         } else {
-            self.handle_normal_message(chat_id, text, reply_to).await
+            self.handle_normal_message(chat_id, is_private, text, reply_to)
+                .await
         };
 
         if let Err(e) = result {
@@ -476,6 +480,7 @@ impl BotFrontend {
     async fn handle_normal_message(
         &self,
         chat_id: i64,
+        is_private: bool,
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
@@ -496,8 +501,8 @@ impl BotFrontend {
             let response = format!("❌ Unknown command: {}", cmd);
             self.send_message(chat_id, &response, None).await?;
             warn!("Unknown command: {}", cmd);
-        } else {
-            // Plain text search
+        } else if is_private {
+            // Plain text search (only in private chats)
             self.handle_search(chat_id, 0, trimmed, reply_to).await?;
         }
 
@@ -508,6 +513,7 @@ impl BotFrontend {
     async fn handle_admin_message(
         &self,
         chat_id: i64,
+        is_private: bool,
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
@@ -530,7 +536,8 @@ impl BotFrontend {
             self.handle_find_chat_id(chat_id, trimmed).await?;
         } else {
             // Fallback to normal handler
-            self.handle_normal_message(chat_id, text, reply_to).await?;
+            self.handle_normal_message(chat_id, is_private, text, reply_to)
+                .await?;
         }
 
         Ok(())
