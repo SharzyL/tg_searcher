@@ -12,7 +12,7 @@ use grammers_session::storages::SqliteSession;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Telegram session configuration
 pub struct ClientSession {
@@ -72,7 +72,7 @@ impl ClientSession {
                 format!("{}://{}:{}", p.scheme, p.host, p.port)
             };
 
-            info!("Using proxy: {}", url);
+            info!("Session {} uses proxy: {}", name, url);
             Some(url)
         } else {
             None
@@ -136,7 +136,7 @@ impl ClientSession {
         // Sign in with code
         match client.sign_in(&token, code.trim()).await {
             Ok(_) => {
-                info!("Signed in successfully");
+                debug!("Signed in successfully");
             }
             Err(SignInError::PasswordRequired(password_token)) => {
                 // 2FA required
@@ -154,7 +154,7 @@ impl ClientSession {
                         Error::Telegram(format!("Password authentication failed: {}", e))
                     })?;
 
-                info!("Signed in successfully with 2FA");
+                debug!("Signed in successfully with 2FA");
             }
             Err(e) => {
                 return Err(Error::Telegram(format!("Sign in failed: {}", e)));
@@ -211,7 +211,7 @@ impl ClientSession {
             }
         }
 
-        info!(
+        debug!(
             "Populated access hashes and {} chat names for session {}",
             self.chat_cache.len(),
             self.name

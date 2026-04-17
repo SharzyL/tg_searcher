@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use thiserror::Error;
 use tokio::task::JoinError;
 
@@ -55,14 +56,23 @@ pub struct IndexMsg {
     pub sender: String,
 }
 
+/// A text snippet with highlighted (matched) byte ranges
+#[derive(Debug, Clone)]
+pub struct HighlightedSnippet {
+    /// The plain text fragment from tantivy
+    pub fragment: String,
+    /// Byte ranges within `fragment` that should be highlighted (bold)
+    pub highlights: Vec<Range<usize>>,
+}
+
 /// Search result hit with highlighting
 #[derive(Debug, Clone)]
 pub struct SearchHit {
     /// The indexed message
     pub msg: IndexMsg,
 
-    /// Highlighted content (HTML with highlights)
-    pub highlighted: String,
+    /// Snippet with highlight ranges
+    pub snippet: HighlightedSnippet,
 }
 
 /// Search results with pagination info

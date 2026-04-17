@@ -12,6 +12,7 @@ use crate::config::{BotFrontendConfig, FrontendConfig};
 use crate::session::ClientSession;
 use crate::storage::Storage;
 use crate::types::{Result, SearchResult};
+use crate::utils::MessageBuilder;
 use crate::utils::remove_first_word;
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::types::update::{CallbackQuery, Update};
@@ -66,8 +67,6 @@ impl BotFrontend {
         common_config: &crate::config::CommonConfig,
         register_commands: bool,
     ) -> Result<Self> {
-        info!("Creating bot frontend: {}", frontend_id);
-
         // Create a separate session for the bot frontend
         let session_file = common_config
             .session_dir()
@@ -99,7 +98,7 @@ impl BotFrontend {
 
     /// Initialize the bot (just a placeholder, real init happens in run)
     pub async fn initialize(&mut self) -> Result<()> {
-        info!("Bot frontend initialized: {}", self.id);
+        debug!("Bot frontend initialized: {}", self.id);
         Ok(())
     }
 
@@ -181,6 +180,8 @@ impl BotFrontend {
                 -1 // Invalid message ID
             }
         };
+
+
 
         // Spawn task to update greeting when cache is ready
         if greeting_msg_id > 0 {
@@ -444,11 +445,13 @@ impl BotFrontend {
                 .await?;
             let used_time = start_time.elapsed().as_secs_f64();
 
-            let response = self.render_response_text(&result, used_time).await?;
             let buttons = self.render_buttons(&result, page_num);
+            let message = self
+                .render_response_message(&result, used_time, buttons)
+                .await?;
 
             // Edit message with new page
-            self.edit_message(chat_id, message_id, &response, Some(buttons))
+            self.edit_input_message(chat_id, message_id, message)
                 .await?;
             info!(
                 "Updated search results to page {} ({} results)",
@@ -481,7 +484,7 @@ impl BotFrontend {
         // Edit message
         self.edit_message(chat_id, message_id, &response, None)
             .await?;
-        info!("Selected chat: {} ({})", chat_name, selected_chat_id);
+        debug!("Selected chat: {} ({})", chat_name, selected_chat_id);
 
         Ok(())
     }
@@ -686,11 +689,13 @@ impl BotFrontend {
             .await?;
         let used_time = start_time.elapsed().as_secs_f64();
 
-        let response = self.render_response_text(&result, used_time).await?;
         let buttons = self.render_buttons(&result, 1);
+        let message = self
+            .render_response_message(&result, used_time, buttons)
+            .await?;
 
-        // Send search results and get message_id
-        let sent_message_id = self.send_message(chat_id, &response, Some(buttons)).await?;
+        // Send search results and get message_id; fall back to HTML on failure
+        let sent_message_id = self.send_input_message(chat_id, message).await?;
         info!("Sent search results: {} hits", result.total_results);
 
         // Store query for pagination
@@ -855,7 +860,7 @@ impl BotFrontend {
             );
             self.edit_message(chat_id, progress_msg_id, &response, None)
                 .await?;
-            info!("Downloaded {} messages from {}", count, target_chat_id);
+            debug!("Downloaded {} messages from {}", count, target_chat_id);
         }
 
         Ok(())
@@ -1002,7 +1007,7 @@ impl BotFrontend {
         );
 
         self.send_message(chat_id, &response, None).await?;
-        info!("Started background chat name cache refresh");
+        debug!("Started background chat name cache refresh");
 
         Ok(())
     }
@@ -1087,18 +1092,23 @@ impl BotFrontend {
     }
 
     /// Render search results as HTML
-    async fn render_response_text(&self, result: &SearchResult, used_time: f64) -> Result<String> {
-        let mut parts = vec![format!(
+    async fn render_response_message(
+        &self,
+        result: &SearchResult,
+        used_time: f64,
+        buttons: Vec<Vec<(String, String)>>,
+    ) -> Result<InputMessage> {
+        let mut builder = MessageBuilder::new();
+
+        builder.push(&format!(
             "Found {} results in {:.3} seconds:\n\n",
             result.total_results, used_time
-        )];
+        ));
 
         // Pre-translate unique chat IDs to avoid redundant lookups
-        // Collect unique chat IDs first
         let unique_chat_ids: std::collections::HashSet<_> =
             result.hits.iter().map(|hit| hit.msg.chat_id).collect();
 
-        // Fetch names for all unique chat IDs
         let mut chat_names = std::collections::HashMap::new();
         for &chat_id in &unique_chat_ids {
             let name = self.backend.translate_chat_id(chat_id).await?;
@@ -1107,23 +1117,30 @@ impl BotFrontend {
 
         for hit in &result.hits {
             let chat_title = &chat_names[&hit.msg.chat_id];
+            let mark = builder.mark();
+            builder.push(chat_title);
             if !hit.msg.sender.is_empty() {
-                parts.push(format!(
-                    "<b>{} (<u>{}</u>) [{}]</b>\n",
-                    chat_title, hit.msg.sender, hit.msg.post_time
-                ));
-            } else {
-                parts.push(format!("<b>{} [{}]</b>\n", chat_title, hit.msg.post_time));
+                builder.push(" (");
+                builder.push_underline(&hit.msg.sender);
+                builder.push(")");
             }
+            builder.push(&format!(" [{}]", hit.msg.post_time));
+            builder.push_bold_since(mark);
+            builder.push("\n");
 
-            // The highlighted text is already HTML with <b> tags around matches
-            parts.push(format!(
-                "<a href=\"{}\">{}</a>\n\n",
-                hit.msg.url, hit.highlighted
-            ));
+            builder.push_highlighted_snippet(&hit.snippet, &hit.msg.url);
+            builder.push("\n\n");
         }
 
-        Ok(parts.join(""))
+        let (text, entities) = builder.build();
+        let mut message = InputMessage::new().text(text).fmt_entities(entities);
+
+        if !buttons.is_empty() {
+            let markup = Self::create_inline_buttons_static(buttons);
+            message = message.reply_markup(&markup);
+        }
+
+        Ok(message)
     }
 
     /// Register bot commands with Telegram
@@ -1191,7 +1208,7 @@ impl BotFrontend {
             })
             .await
         {
-            Ok(_) => info!("Registered default bot commands"),
+            Ok(_) => debug!("Registered default bot commands"),
             Err(e) => warn!("Failed to register default bot commands: {}", e),
         }
 
@@ -1207,7 +1224,7 @@ impl BotFrontend {
             })
             .await
         {
-            Ok(_) => info!("Registered admin bot commands"),
+            Ok(_) => debug!("Registered admin bot commands"),
             Err(e) => warn!("Failed to register admin bot commands: {}", e),
         }
     }
@@ -1334,6 +1351,43 @@ impl BotFrontend {
             .as_ref()
             .ok_or_else(|| crate::types::Error::Config("Bot client not initialized".to_string()))?;
         Self::send_message_with_client(client, chat_id, text, buttons).await
+    }
+
+    /// Send a pre-built InputMessage to a chat
+    async fn send_input_message(
+        &self,
+        chat_id: i64,
+        message: InputMessage,
+    ) -> Result<i32> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| crate::types::Error::Config("Bot client not initialized".to_string()))?;
+        let peer = Self::chat_id_to_input_peer_static(chat_id);
+        let sent = client
+            .send_message(peer, message)
+            .await
+            .map_err(|e| crate::types::Error::Telegram(format!("Failed to send message: {}", e)))?;
+        Ok(sent.id())
+    }
+
+    /// Edit a message with a pre-built InputMessage
+    async fn edit_input_message(
+        &self,
+        chat_id: i64,
+        message_id: i32,
+        message: InputMessage,
+    ) -> Result<()> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| crate::types::Error::Config("Bot client not initialized".to_string()))?;
+        let chat = Self::chat_id_to_input_peer_static(chat_id);
+        client
+            .edit_message(chat, message_id, message)
+            .await
+            .map_err(|e| crate::types::Error::Telegram(format!("Failed to edit message: {}", e)))?;
+        Ok(())
     }
 
     /// Edit a message (static helper)

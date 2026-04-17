@@ -15,7 +15,7 @@ mod utils;
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(name = "tg-searcher")]
@@ -30,9 +30,13 @@ struct Args {
     #[arg(short = 'c', long, default_value = "searcher.yaml")]
     config: PathBuf,
 
-    /// Enable debug logging
+    /// Enable debug logging for app code
     #[arg(long)]
     debug: bool,
+
+    /// Enable debug logging for all code including dependencies
+    #[arg(long)]
+    debug_all: bool,
 
     /// Do not register bot commands on startup
     #[arg(long)]
@@ -44,7 +48,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Initialize logging
-    init_logging(args.debug);
+    init_logging(args.debug, args.debug_all);
 
     info!("Starting tg-searcher, reading config {:?}", args.config);
     if args.clear {
@@ -101,7 +105,7 @@ async fn main() -> Result<()> {
         sessions.insert(session_config.name.clone(), std::sync::Arc::new(session));
     }
 
-    info!("Created {} session(s)", sessions.len());
+    debug!("Created {} session(s)", sessions.len());
 
     // Initialize backends with indexers
     let mut backends = std::collections::HashMap::new();
@@ -146,7 +150,7 @@ async fn main() -> Result<()> {
         backends.insert(backend_config.id.clone(), backend_arc.clone());
     }
 
-    info!("Created {} backend(s)", backends.len());
+    debug!("Created {} backend(s)", backends.len());
 
     // Initialize and start all backends
     for backend in backends.values() {
@@ -164,11 +168,11 @@ async fn main() -> Result<()> {
         }));
     }
 
-    info!("Started all backend event loops");
+    debug!("Started all backend event loops");
 
     // Initialize frontends with storage
     let mut frontend_tasks = Vec::new();
-    let mut frontend_count = config.frontends.len();
+    let mut frontend_count = 0;
 
     for frontend_config in &config.frontends {
         // Get the backend for this frontend
@@ -220,7 +224,7 @@ async fn main() -> Result<()> {
         frontend_count += 1;
     }
 
-    info!("Created {} frontend(s)", frontend_count);
+    debug!("Created {} frontend(s)", frontend_count);
 
     if frontend_count == 0 {
         return Err(anyhow::anyhow!("No frontends configured"));
@@ -239,15 +243,18 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_logging(debug: bool) {
+fn init_logging(debug: bool, debug_all: bool) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-    // Set app logs to info/debug, but suppress verbose third-party logs
-    let default_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=warn,grammers_session=warn,tantivy=warn";
-    let filter = if debug {
+    // grammers_client::client::updates emits spurious "missing its hash" warnings because
+    // PeerAuthCache starts empty and isn't loaded from the session store (grammers limitation).
+    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn";
+    let filter = if debug_all {
         EnvFilter::new("debug")
+    } else if debug {
+        EnvFilter::new(format!("debug,{}", dep_filter))
     } else {
-        EnvFilter::new(format!("info,{}", default_filter))
+        EnvFilter::new(format!("info,{}", dep_filter))
     };
 
     let stdout_layer = fmt::layer();
@@ -269,11 +276,17 @@ mod tests {
         assert!(!args.clear);
         assert_eq!(args.config, PathBuf::from("searcher.yaml"));
         assert!(!args.debug);
+        assert!(!args.debug_all);
 
         // Test with flags
         let args = Args::parse_from(&["tg-searcher", "--clear", "--debug", "-c", "test.yaml"]);
         assert!(args.clear);
         assert_eq!(args.config, PathBuf::from("test.yaml"));
         assert!(args.debug);
+        assert!(!args.debug_all);
+
+        // Test --debug-all
+        let args = Args::parse_from(&["tg-searcher", "--debug-all"]);
+        assert!(args.debug_all);
     }
 }

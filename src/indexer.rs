@@ -3,9 +3,10 @@
 //! This module provides a wrapper around Tantivy for indexing and searching
 //! Telegram messages with support for Chinese word segmentation via jieba.
 
-use crate::types::{Error, IndexMsg, Result, SearchHit, SearchResult};
+use crate::types::{Error, HighlightedSnippet, IndexMsg, Result, SearchHit, SearchResult};
 use jieba_rs::Jieba;
 use std::collections::HashMap;
+use tracing::warn;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -366,6 +367,7 @@ impl Indexer {
             .parse_query(query_str)
             .map_err(|e| Error::Index(e.to_string()))?;
 
+
         // Add chat filter if specified
         if let Some(chats) = in_chats {
             let chat_queries: Vec<(Occur, Box<dyn Query>)> = chats
@@ -418,12 +420,14 @@ impl Indexer {
                 .doc(doc_address)
                 .map_err(|e| Error::Index(e.to_string()))?;
 
-            // Extract fields
-            let content = doc
-                .get_first(self.fields.content)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            // Extract fields. Decode HTML entities — the old Python indexer stored
+            // HTML-encoded text (e.g. &amp; for &).
+            let content = html_escape::decode_html_entities(
+                doc.get_first(self.fields.content)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            )
+            .into_owned();
             let url = doc
                 .get_first(self.fields.url)
                 .and_then(|v| v.as_str())
@@ -446,6 +450,10 @@ impl Indexer {
                 .unwrap_or("")
                 .to_string();
 
+            // Generate snippet from decoded content so highlight byte ranges
+            // are valid for the decoded text directly.
+            let snippet = snippet_generator.snippet(&content);
+
             let msg = IndexMsg {
                 content: content.clone(),
                 url,
@@ -453,11 +461,28 @@ impl Indexer {
                 post_time,
                 sender,
             };
+            let snippet_data = if snippet.fragment().is_empty() && !content.is_empty() {
+                warn!(
+                    "Empty snippet for non-empty content (url={}): {:?}",
+                    msg.url,
+                    crate::utils::brief_content(&content, 100),
+                );
+                let truncated: String = content.chars().take(100).collect();
+                HighlightedSnippet {
+                    fragment: truncated,
+                    highlights: vec![],
+                }
+            } else {
+                HighlightedSnippet {
+                    fragment: snippet.fragment().to_string(),
+                    highlights: snippet.highlighted().to_vec(),
+                }
+            };
 
-            let snippet = snippet_generator.snippet_from_doc(&doc);
-            let highlighted = snippet.to_html();
-
-            hits.push(SearchHit { msg, highlighted });
+            hits.push(SearchHit {
+                msg,
+                snippet: snippet_data,
+            });
         }
 
         let is_last_page = offset + page_len >= total_results;
@@ -745,7 +770,8 @@ mod tests {
         // Search for single character that appears multiple times
         let results = indexer.search("人", None, 10, 1).await.unwrap();
         assert_eq!(results.total_results, 1);
-        assert!(results.hits[0].highlighted.contains("<b>人</b>"));
+        assert!(results.hits[0].snippet.fragment.contains("人"));
+        assert!(!results.hits[0].snippet.highlights.is_empty());
     }
 
     #[tokio::test]

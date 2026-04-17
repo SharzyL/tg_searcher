@@ -64,8 +64,6 @@ impl BackendBot {
         session: Arc<ClientSession>,
         indexer: Arc<Indexer>,
     ) -> Result<Self> {
-        info!("Creating backend bot: {}", backend_id);
-
         // Get all indexed chats to monitor (doesn't require a client)
         let indexed_chats = indexer.list_indexed_chats().await?;
         let monitored_chats = Arc::new(DashMap::new());
@@ -493,7 +491,7 @@ impl BackendBot {
                 }
             }
 
-            info!("Background: Refreshed {} chat names in cache", count);
+            debug!("Background: Refreshed {} chat names in cache", count);
         });
     }
 
@@ -655,7 +653,7 @@ impl BackendBot {
 
             // Log with brief excerpt
             let brief = brief_content(&content, 20);
-            info!("Indexed new message in chat {}: {:?}", share_id, brief);
+            debug!("Indexed new message in chat {}: {:?}", share_id, brief);
         }
 
         Ok(())
@@ -682,7 +680,7 @@ impl BackendBot {
 
             // Log with brief excerpt
             let brief = brief_content(&content, 20);
-            info!("Updated edited message in chat {}: {:?}", share_id, brief);
+            debug!("Updated edited message in chat {}: {:?}", share_id, brief);
         }
 
         Ok(())
