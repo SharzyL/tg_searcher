@@ -12,8 +12,7 @@ use std::sync::RwLock;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
 use tantivy::schema::*;
-// TODO: re-enable snippet highlighting once the buggy behavior is fixed
-// use tantivy::snippet::SnippetGenerator;
+use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term, doc};
 
@@ -407,11 +406,10 @@ impl Indexer {
             .search(&query, &count_collector)
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        // TODO: re-enable snippet highlighting once the buggy behavior is fixed
-        // let mut snippet_generator =
-        //     SnippetGenerator::create(&searcher, &*query, self.fields.content)
-        //         .map_err(|e| Error::Index(e.to_string()))?;
-        // snippet_generator.set_max_num_chars(100);
+        let mut snippet_generator =
+            SnippetGenerator::create(&searcher, &*query, self.fields.content)
+                .map_err(|e| Error::Index(e.to_string()))?;
+        snippet_generator.set_max_num_chars(100);
 
         // Convert results to SearchHits
         let mut hits = Vec::new();
@@ -456,8 +454,8 @@ impl Indexer {
                 sender,
             };
 
-            // TODO: re-enable snippet highlighting once the buggy behavior is fixed
-            let highlighted = html_escape::encode_text(&content).into_owned();
+            let snippet = snippet_generator.snippet_from_doc(&doc);
+            let highlighted = snippet.to_html();
 
             hits.push(SearchHit { msg, highlighted });
         }
@@ -747,9 +745,7 @@ mod tests {
         // Search for single character that appears multiple times
         let results = indexer.search("人", None, 10, 1).await.unwrap();
         assert_eq!(results.total_results, 1);
-        // TODO: re-enable once snippet highlighting is fixed
-        // assert!(results.hits[0].highlighted.contains("<b>人</b>"));
-        assert!(results.hits[0].highlighted.contains("人"));
+        assert!(results.hits[0].highlighted.contains("<b>人</b>"));
     }
 
     #[tokio::test]

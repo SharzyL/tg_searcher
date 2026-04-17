@@ -33,6 +33,10 @@ struct Args {
     /// Enable debug logging
     #[arg(long)]
     debug: bool,
+
+    /// Do not register bot commands on startup
+    #[arg(long)]
+    no_register_commands: bool,
 }
 
 #[tokio::main]
@@ -190,6 +194,7 @@ async fn main() -> Result<()> {
             backend,
             storage,
             &config.common,
+            !args.no_register_commands,
         )
         .await
         .map_err(|e| {

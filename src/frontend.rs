@@ -51,6 +51,9 @@ pub struct BotFrontend {
 
     /// Bot username (set during run)
     username: Option<String>,
+
+    /// Whether to register bot commands on startup
+    register_commands: bool,
 }
 
 impl BotFrontend {
@@ -61,6 +64,7 @@ impl BotFrontend {
         backend: Arc<BackendBot>,
         storage: Arc<dyn Storage>,
         common_config: &crate::config::CommonConfig,
+        register_commands: bool,
     ) -> Result<Self> {
         info!("Creating bot frontend: {}", frontend_id);
 
@@ -89,6 +93,7 @@ impl BotFrontend {
             config: config.config.clone(),
             admin_id: config.config.admin_id,
             username: None,
+            register_commands,
         })
     }
 
@@ -133,6 +138,11 @@ impl BotFrontend {
             .unwrap_or_else(|| format!("bot_{}", self.id));
 
         info!("Bot authenticated, username: {}", username);
+
+        // Register bot commands
+        if self.register_commands {
+            self.register_bot_commands(&client).await;
+        }
 
         // Store client and username
         self.client = Some(client);
@@ -1114,6 +1124,92 @@ impl BotFrontend {
         }
 
         Ok(parts.join(""))
+    }
+
+    /// Register bot commands with Telegram
+    async fn register_bot_commands(&self, client: &Client) {
+        info!("Registering bot commands");
+        let commands = vec![
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "search".to_string(),
+                description: "[query] - Search messages".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "chats".to_string(),
+                description: "[keyword] - List indexed chats".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "random".to_string(),
+                description: "Get a random message".to_string(),
+            }),
+        ];
+        let admin_commands = vec![
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "search".to_string(),
+                description: "[query] - Search messages".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "chats".to_string(),
+                description: "[keyword] - List indexed chats".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "random".to_string(),
+                description: "Get a random message".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "stat".to_string(),
+                description: "Show index statistics".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "download_chat".to_string(),
+                description: "[chat ...] [min= max=] - Download chat history".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "monitor_chat".to_string(),
+                description: "[chat ...] - Start monitoring a chat".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "clear".to_string(),
+                description: "[chat ... | all] - Clear index for a chat".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "refresh_chat_names".to_string(),
+                description: "Refresh chat name cache".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "find_chat_id".to_string(),
+                description: "<keyword> - Find chat ID by name".to_string(),
+            }),
+        ];
+
+        // Register default commands (visible to all users)
+        match client
+            .invoke(&tl::functions::bots::SetBotCommands {
+                scope: tl::enums::BotCommandScope::Default,
+                lang_code: String::new(),
+                commands,
+            })
+            .await
+        {
+            Ok(_) => info!("Registered default bot commands"),
+            Err(e) => warn!("Failed to register default bot commands: {}", e),
+        }
+
+        // Register admin commands (visible only to admin in PM)
+        let admin_peer = Self::chat_id_to_input_peer_static(self.admin_id);
+        match client
+            .invoke(&tl::functions::bots::SetBotCommands {
+                scope: tl::enums::BotCommandScope::Peer(tl::types::BotCommandScopePeer {
+                    peer: admin_peer,
+                }),
+                lang_code: String::new(),
+                commands: admin_commands,
+            })
+            .await
+        {
+            Ok(_) => info!("Registered admin bot commands"),
+            Err(e) => warn!("Failed to register admin bot commands: {}", e),
+        }
     }
 
     /// Convert chat_id to InputPeer for message sending
