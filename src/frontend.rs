@@ -98,7 +98,7 @@ impl BotFrontend {
 
     /// Initialize the bot (just a placeholder, real init happens in run)
     pub async fn initialize(&mut self) -> Result<()> {
-        debug!("Bot frontend initialized: {}", self.id);
+        debug!("[{}] frontend initialized", self.id);
         Ok(())
     }
 
@@ -118,7 +118,7 @@ impl BotFrontend {
         if !client.is_authorized().await.map_err(|e| {
             crate::types::Error::Telegram(format!("Failed to check bot authorization: {}", e))
         })? {
-            info!("Bot signing in with token");
+            info!("[{}] bot signing in with token", self.id);
             client
                 .bot_sign_in(&self.config.bot_token, self.session.api_hash())
                 .await
@@ -136,7 +136,7 @@ impl BotFrontend {
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("bot_{}", self.id));
 
-        info!("Bot authenticated, username: {}", username);
+        info!("[{}] bot authenticated, username: {}", self.id, username);
 
         // Register bot commands
         if self.register_commands {
@@ -156,7 +156,7 @@ impl BotFrontend {
         {
             Ok(status) => status,
             Err(e) => {
-                warn!("Failed to generate index status for greeting: {}", e);
+                warn!("[{}] failed to generate index status for greeting: {}", self.id, e);
                 format!(
                     "Backend: <b>{}</b>\nMonitored chats: <b>{}</b>",
                     self.backend.id(),
@@ -176,7 +176,7 @@ impl BotFrontend {
         let greeting_msg_id = match self.send_message(self.admin_id, &greeting, None).await {
             Ok(msg_id) => msg_id,
             Err(e) => {
-                warn!("Failed to send greeting message to admin: {}", e);
+                warn!("[{}] failed to send greeting message to admin: {}", self.id, e);
                 -1 // Invalid message ID
             }
         };
@@ -190,6 +190,7 @@ impl BotFrontend {
             let client = self.client.clone();
             let username_clone = username.clone();
             let index_status_clone = index_status.clone();
+            let frontend_id = self.id.clone();
 
             tokio::spawn(async move {
                 // Get cache info (cache is always ready after session initialization)
@@ -228,9 +229,9 @@ impl BotFrontend {
                     let input = InputMessage::new().html(&updated_greeting);
                     if let Err(e) = client.edit_message(peer, greeting_msg_id, input).await {
                         warn!(
-                            "Failed to update greeting message: {}. \
+                            "[{}] failed to update greeting message: {}. \
                             If you're the admin, send /start to the bot first.",
-                            e
+                            frontend_id, e
                         );
                     }
                 }
@@ -253,12 +254,12 @@ impl BotFrontend {
                     match update {
                         Update::NewMessage(message) if !message.outgoing() => {
                             if let Err(e) = self.handle_update_message(message).await {
-                                error!("Error handling bot message: {}", e);
+                                error!("[{}] error handling bot message: {}", self.id, e);
                             }
                         }
                         Update::CallbackQuery(query) => {
                             if let Err(e) = self.handle_update_callback(query).await {
-                                error!("Error handling bot callback: {}", e);
+                                error!("[{}] error handling bot callback: {}", self.id, e);
                             }
                         }
                         _ => {
@@ -267,13 +268,13 @@ impl BotFrontend {
                     }
                 }
                 Err(e) => {
-                    error!("Error getting bot update: {}", e);
+                    error!("[{}] error getting bot update: {}", self.id, e);
                     break;
                 }
             }
         }
 
-        warn!("Bot '{}' event loop exited", self.id);
+        warn!("[{}] event loop exited", self.id);
         Ok(())
     }
 
@@ -296,7 +297,7 @@ impl BotFrontend {
         let sender_id = if let Some(sender_peer) = message.sender() {
             sender_peer.id().bot_api_dialog_id()
         } else {
-            warn!("Message without sender");
+            warn!("[{}] message without sender", self.id);
             return Ok(());
         };
 
@@ -305,7 +306,7 @@ impl BotFrontend {
             && sender_id != self.admin_id
             && !self.config.private_whitelist.contains(&sender_id)
         {
-            warn!("Unauthorized user {} tried to use bot", sender_id);
+            warn!("[{}] unauthorized user {} tried to use bot", self.id, sender_id);
             return Ok(());
         }
 
@@ -321,7 +322,7 @@ impl BotFrontend {
         };
 
         if let Err(e) = result {
-            error!("Error handling message: {}", e);
+            error!("[{}] error handling message: {}", self.id, e);
             // Format error message for user (simplify technical jargon)
             let error_msg = match &e {
                 crate::types::Error::EntityNotFound(entity) => {
@@ -335,7 +336,7 @@ impl BotFrontend {
                 }
             };
             if let Err(send_err) = self.send_message(chat_id, &error_msg, None).await {
-                error!("Failed to send error message to user: {}", send_err);
+                error!("[{}] failed to send error message to user: {}", self.id, send_err);
             }
         }
 
@@ -359,16 +360,16 @@ impl BotFrontend {
                 (peer_id.bot_api_dialog_id(), update.msg_id)
             }
             _ => {
-                warn!("Callback query not from bot");
+                warn!("[{}] callback query not from bot", self.id);
                 return Ok(());
             }
         };
 
-        debug!("Callback query from {}: {}", chat_id, data_str);
+        debug!("[{}] callback query from {}: {}", self.id, chat_id, data_str);
 
         // Answer the callback query to remove loading state
         if let Err(e) = query.answer().send().await {
-            warn!("Failed to answer callback query: {}", e);
+            warn!("[{}] failed to answer callback query: {}", self.id, e);
         }
 
         // Handle the callback
@@ -381,18 +382,18 @@ impl BotFrontend {
     async fn handle_callback(&self, chat_id: i64, message_id: i32, data: &str) -> Result<()> {
         // Ignore noop callbacks (disabled buttons)
         if data == std::str::from_utf8(NOOP_CALLBACK).unwrap_or("noop") {
-            debug!("Ignoring noop callback from chat {}", chat_id);
+            debug!("[{}] ignoring noop callback from chat {}", self.id, chat_id);
             return Ok(());
         }
 
         info!(
-            "Callback query ({}) from {}, data={}",
-            message_id, chat_id, data
+            "[{}] callback ({}) from chat {}, data={}",
+            self.id, message_id, chat_id, data
         );
 
         let parts: Vec<&str> = data.split('=').collect();
         if parts.len() != 2 {
-            warn!("Invalid callback data: {}", data);
+            warn!("[{}] invalid callback data: {}", self.id, data);
             return Ok(());
         }
 
@@ -408,7 +409,7 @@ impl BotFrontend {
                     .await?;
             }
             _ => {
-                warn!("Unknown callback data: {}", data);
+                warn!("[{}] unknown callback data: {}", self.id, data);
             }
         }
 
@@ -434,8 +435,8 @@ impl BotFrontend {
                 chats_str.map(|s| s.split(',').filter_map(|id| id.parse().ok()).collect());
 
             info!(
-                "Query [{}] (chats={:?}) turned to page {}",
-                q, chats, page_num
+                "[{}] query [{}] (chats={:?}) turned to page {}",
+                self.id, q, chats, page_num
             );
 
             let start_time = Instant::now();
@@ -454,8 +455,8 @@ impl BotFrontend {
             self.edit_input_message(chat_id, message_id, message)
                 .await?;
             info!(
-                "Updated search results to page {} ({} results)",
-                page_num, result.total_results
+                "[{}] updated search results to page {} ({} results)",
+                self.id, page_num, result.total_results
             );
         }
 
@@ -484,7 +485,7 @@ impl BotFrontend {
         // Edit message
         self.edit_message(chat_id, message_id, &response, None)
             .await?;
-        debug!("Selected chat: {} ({})", chat_name, selected_chat_id);
+        debug!("[{}] selected chat: {} ({})", self.id, chat_name, selected_chat_id);
 
         Ok(())
     }
@@ -497,7 +498,7 @@ impl BotFrontend {
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
-        info!("User message in {}: {}", chat_id, text);
+        info!("[{}] user message in chat {}: {}", self.id, chat_id, text);
 
         let trimmed = text.trim();
 
@@ -513,7 +514,7 @@ impl BotFrontend {
             let cmd = trimmed.split_whitespace().next().unwrap_or("");
             let response = format!("❌ Unknown command: {}", cmd);
             self.send_message(chat_id, &response, None).await?;
-            warn!("Unknown command: {}", cmd);
+            warn!("[{}] unknown command: {}", self.id, cmd);
         } else if is_private {
             // Plain text search (only in private chats)
             self.handle_search(chat_id, 0, trimmed, reply_to).await?;
@@ -530,7 +531,7 @@ impl BotFrontend {
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
-        info!("Admin message: {}", text);
+        info!("[{}] admin message: {}", self.id, text);
 
         let trimmed = text.trim();
 
@@ -566,12 +567,12 @@ impl BotFrontend {
                     chat_name, msg.post_time, msg.url
                 );
                 self.send_message(chat_id, &response, None).await?;
-                info!("Sent random message from {}", chat_name);
+                info!("[{}] sent random message from {}", self.id, chat_name);
             }
             None => {
                 let response = "❌ Index is empty";
                 self.send_message(chat_id, response, None).await?;
-                info!("Index is empty");
+                info!("[{}] index is empty", self.id);
             }
         }
         Ok(())
@@ -644,7 +645,7 @@ impl BotFrontend {
         }
 
         self.send_message(chat_id, &response, Some(buttons)).await?;
-        info!("Sent chat list with {} buttons", display_chats.len());
+        info!("[{}] sent chat list with {} buttons", self.id, display_chats.len());
 
         Ok(())
     }
@@ -680,7 +681,7 @@ impl BotFrontend {
         // Get selected chat from reply
         let chats = self.query_selected_chat(chat_id, reply_to).await?;
 
-        info!("Search \"{}\" in chats {:?}", query, chats);
+        info!("[{}] search \"{}\" in chats {:?}", self.id, query, chats);
 
         let start_time = Instant::now();
         let result = self
@@ -696,7 +697,7 @@ impl BotFrontend {
 
         // Send search results and get message_id; fall back to HTML on failure
         let sent_message_id = self.send_input_message(chat_id, message).await?;
-        info!("Sent search results: {} hits", result.total_results);
+        info!("[{}] sent search results: {} hits", self.id, result.total_results);
 
         // Store query for pagination
         let query_key = format!("{}:query_text:{}:{}", self.id, chat_id, sent_message_id);
@@ -722,7 +723,7 @@ impl BotFrontend {
             .get_index_status(crate::backend::STATUS_MESSAGE_LENGTH_LIMIT)
             .await?;
         self.send_message(chat_id, &status, None).await?;
-        info!("Sent index status");
+        info!("[{}] sent index status", self.id);
         Ok(())
     }
 
@@ -785,8 +786,8 @@ impl BotFrontend {
 
         for &target_chat_id in &ids {
             info!(
-                "Start downloading history of {} (min={:?}, max={:?})",
-                target_chat_id, min_id, max_id
+                "[{}] start downloading history of chat {} (min={:?}, max={:?})",
+                self.id, target_chat_id, min_id, max_id
             );
 
             // Check if chat already has indexed documents
@@ -846,7 +847,7 @@ impl BotFrontend {
                 let _ = progress_tx.send(progress);
             };
 
-            let count = self
+            let result = self
                 .backend
                 .download_history(target_chat_id, min_id, max_id, Some(progress_callback))
                 .await?;
@@ -855,12 +856,15 @@ impl BotFrontend {
 
             // Edit final message with completion status
             let response = format!(
-                "✅ Downloaded {} messages from chat {}",
-                count, target_chat_id
+                "✅ Downloaded {} messages from chat {} (msg_id {}..{})",
+                result.indexed_count, target_chat_id, result.min_msg_id, result.max_msg_id
             );
             self.edit_message(chat_id, progress_msg_id, &response, None)
                 .await?;
-            debug!("Downloaded {} messages from {}", count, target_chat_id);
+            debug!(
+                "[{}] downloaded {} messages from chat {} (msg_id {}..{})",
+                self.id, result.indexed_count, target_chat_id, result.min_msg_id, result.max_msg_id
+            );
         }
 
         Ok(())
@@ -895,7 +899,7 @@ impl BotFrontend {
 
         if !ids.is_empty() {
             for &target_chat_id in &ids {
-                info!("Add {} to monitored_chats", target_chat_id);
+                info!("[{}] add chat {} to monitored_chats", self.id, target_chat_id);
                 let chat_html = self.backend.format_dialog_html(target_chat_id).await?;
                 let response = format!("{} has been added to monitoring list", chat_html);
                 self.send_message(chat_id, &response, None).await?;
@@ -931,7 +935,7 @@ impl BotFrontend {
                 cleared.len()
             );
             self.send_message(chat_id, &response, None).await?;
-            info!("All indexes cleared ({} chats)", cleared.len());
+            info!("[{}] all indexes cleared ({} chats)", self.id, cleared.len());
         } else {
             let (ids, failed) = if chat_args.is_empty() {
                 match self.query_selected_chat(chat_id, reply_to).await? {
@@ -1007,7 +1011,7 @@ impl BotFrontend {
         );
 
         self.send_message(chat_id, &response, None).await?;
-        debug!("Started background chat name cache refresh");
+        debug!("[{}] started background chat name cache refresh", self.id);
 
         Ok(())
     }
@@ -1050,7 +1054,7 @@ impl BotFrontend {
         response.push_str("\n\nUse /refresh_chat_names to update the cache.");
 
         self.send_message(chat_id, &response, None).await?;
-        info!("Sent find results: {} chats", found_chat_ids.len());
+        info!("[{}] sent find results: {} chats", self.id, found_chat_ids.len());
 
         Ok(())
     }
@@ -1082,7 +1086,7 @@ impl BotFrontend {
             match self.backend.str_to_chat_id(chat).await {
                 Ok(id) => ids.push(id),
                 Err(e) => {
-                    error!("Failed to resolve chat {}: {}", chat, e);
+                    error!("[{}] failed to resolve chat {}: {}", self.id, chat, e);
                     failed.push(chat.clone());
                 }
             }
@@ -1145,7 +1149,7 @@ impl BotFrontend {
 
     /// Register bot commands with Telegram
     async fn register_bot_commands(&self, client: &Client) {
-        info!("Registering bot commands");
+        info!("[{}] registering bot commands", self.id);
         let commands = vec![
             tl::enums::BotCommand::Command(tl::types::BotCommand {
                 command: "search".to_string(),
@@ -1208,8 +1212,8 @@ impl BotFrontend {
             })
             .await
         {
-            Ok(_) => debug!("Registered default bot commands"),
-            Err(e) => warn!("Failed to register default bot commands: {}", e),
+            Ok(_) => debug!("[{}] registered default bot commands", self.id),
+            Err(e) => warn!("[{}] failed to register default bot commands: {}", self.id, e),
         }
 
         // Register admin commands (visible only to admin in PM)
@@ -1224,8 +1228,8 @@ impl BotFrontend {
             })
             .await
         {
-            Ok(_) => debug!("Registered admin bot commands"),
-            Err(e) => warn!("Failed to register admin bot commands: {}", e),
+            Ok(_) => debug!("[{}] registered admin bot commands", self.id),
+            Err(e) => warn!("[{}] failed to register admin bot commands: {}", self.id, e),
         }
     }
 

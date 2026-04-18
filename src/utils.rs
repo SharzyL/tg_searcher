@@ -11,14 +11,12 @@ pub fn escape_content(content: &str) -> String {
 
 /// Get a brief version of content for logging
 pub fn brief_content(content: &str, trim_len: usize) -> String {
-    if content.len() < trim_len {
+    if content.chars().count() < trim_len {
         content.to_string()
     } else {
-        format!(
-            "{}…{}",
-            &content[..trim_len - 4],
-            &content[content.len() - 2..]
-        )
+        let head: String = content.chars().take(trim_len - 4).collect();
+        let tail: String = content.chars().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+        format!("{}…{}", head, tail)
     }
 }
 
@@ -292,8 +290,16 @@ mod tests {
     fn test_brief_content() {
         let long_text = "a".repeat(100);
         let brief = brief_content(&long_text, 20);
-        // Note: '…' is 3 bytes in UTF-8, so the byte length will be slightly more than 20
-        assert!(brief.len() >= 20 && brief.len() <= 23);
+        assert!(brief.contains('…'));
+        // head = 16 chars + '…' + tail = 2 chars = 19 chars
+        assert_eq!(brief.chars().count(), 19);
+
+        // Short text returned as-is
+        assert_eq!(brief_content("short", 20), "short");
+
+        // CJK: should not panic on multi-byte chars
+        let cjk_text = "日本の行政対応等についての説明文書です";
+        let brief = brief_content(cjk_text, 10);
         assert!(brief.contains('…'));
     }
 

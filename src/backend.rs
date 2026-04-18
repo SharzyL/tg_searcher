@@ -14,7 +14,7 @@ const FETCH_PROGRESS_BATCH_SIZE: usize = 100;
 use crate::config::BackendConfig;
 use crate::indexer::Indexer;
 use crate::session::ClientSession;
-use crate::types::{DownloadProgress, IndexMsg, Result, SearchResult};
+use crate::types::{DownloadProgress, DownloadResult, IndexMsg, Result, SearchResult};
 use crate::utils::{brief_content, escape_content, get_share_id};
 use dashmap::DashMap;
 use grammers_client::Client;
@@ -124,9 +124,9 @@ impl BackendBot {
         for entry in self.monitored_chats.iter() {
             let chat_id = *entry.key();
             if let Some(name) = self.chat_cache.get(&chat_id) {
-                info!("Ready to monitor \"{}\" ({})", name.value(), chat_id);
+                info!("[{}] ready to monitor \"{}\" ({})", self.id, name.value(), chat_id);
             } else {
-                info!("Ready to monitor chat {} (name not in cache)", chat_id);
+                info!("[{}] ready to monitor chat {} (name not in cache)", self.id, chat_id);
             }
         }
 
@@ -138,7 +138,7 @@ impl BackendBot {
             },
         );
 
-        info!("Backend streaming updates, waiting for messages...");
+        info!("[{}] streaming updates, waiting for messages...", self.id);
         loop {
             match updates.next().await {
                 Ok(update) => {
@@ -146,43 +146,41 @@ impl BackendBot {
                         Update::NewMessage(message) => {
                             let chat_id = message.peer_id().bot_api_dialog_id();
                             let share_id = crate::utils::get_share_id(chat_id);
-                            debug!("Backend received new message from chat {}", share_id);
+                            let msg_id = message.id();
+                            debug!("[{}] new message in chat {} msg_id={}", self.id, share_id, msg_id);
                             if let Err(e) = self.handle_new_message(message).await {
-                                error!("Error handling new message: {}", e);
+                                error!("[{}] error handling new message (chat={} msg_id={}): {}", self.id, share_id, msg_id, e);
                             }
                         }
                         Update::MessageEdited(message) => {
                             let chat_id = message.peer_id().bot_api_dialog_id();
                             let share_id = crate::utils::get_share_id(chat_id);
-                            debug!("Backend received edited message from chat {}", share_id);
+                            let msg_id = message.id();
+                            debug!("[{}] edited message in chat {} msg_id={}", self.id, share_id, msg_id);
                             if let Err(e) = self.handle_message_edited(message).await {
-                                error!("Error handling edited message: {}", e);
+                                error!("[{}] error handling edited message (chat={} msg_id={}): {}", self.id, share_id, msg_id, e);
                             }
                         }
                         Update::MessageDeleted(deletion) => {
-                            debug!("Backend received message deletion");
+                            let channel_id = deletion.channel_id().map(get_share_id);
+                            let msg_ids = deletion.messages();
+                            debug!("[{}] message deletion in chat {:?} msg_ids={:?}", self.id, channel_id, msg_ids);
                             if let Err(e) = self.handle_message_deleted(deletion).await {
-                                error!("Error handling deleted message: {}", e);
+                                error!("[{}] error handling message deletion (chat={:?}): {}", self.id, channel_id, e);
                             }
                         }
-                        _ => {
-                            // Log other update types at debug level
-                            debug!(
-                                "Backend received other update: {:?}",
-                                std::any::type_name_of_val(&update)
-                            );
-                        }
+                        _ => {}
                     }
                 }
                 Err(e) => {
-                    error!("Error getting update: {}", e);
+                    error!("[{}] error getting update: {}", self.id, e);
                     // Break on error - will cause backend task to exit
                     break;
                 }
             }
         }
 
-        warn!("Backend '{}' event loop exited", self.id);
+        warn!("[{}] event loop exited", self.id);
         Ok(())
     }
 
@@ -257,14 +255,14 @@ impl BackendBot {
         min_id: Option<i32>,
         max_id: Option<i32>,
         progress_callback: Option<F>,
-    ) -> Result<usize>
+    ) -> Result<DownloadResult>
     where
         F: Fn(DownloadProgress),
     {
         let share_id = get_share_id(chat_id);
         info!(
-            "Downloading history from {} (min_id={:?}, max_id={:?})",
-            share_id, min_id, max_id
+            "[{}] downloading history from chat {} (min_id={:?}, max_id={:?})",
+            self.id, share_id, min_id, max_id
         );
 
         // Add to monitored chats
@@ -288,10 +286,12 @@ impl BackendBot {
         let mut newest: Option<IndexMsg> = None;
         let mut batch: Vec<IndexMsg> = Vec::new();
         let mut fetched_last_msg_id: i32 = 0;
+        let mut fetched_max_msg_id: i32 = 0;
+        let mut fetched_min_msg_id: i32 = 0;
 
         info!(
-            "Downloading history from chat {} (streaming fetch + index)...",
-            share_id
+            "[{}] fetching messages from chat {} (streaming fetch + index)...",
+            self.id, share_id
         );
 
         while let Some(message) = message_iter.next().await.map_err(|e| {
@@ -312,12 +312,16 @@ impl BackendBot {
             }
 
             fetched_last_msg_id = msg_id;
+            fetched_min_msg_id = msg_id; // iterator goes newest→oldest, so last seen is min
+            if fetched_count == 0 {
+                fetched_max_msg_id = msg_id;
+            }
             fetched_count += 1;
 
             if let Some(ref callback) = progress_callback
                 && fetched_count.is_multiple_of(FETCH_PROGRESS_BATCH_SIZE)
             {
-                info!("Update: fetched {fetched_count} messages");
+                info!("[{}] fetched {} messages from chat {}", self.id, fetched_count, share_id);
                 callback(DownloadProgress {
                     downloaded: fetched_count,
                     chat_id: share_id,
@@ -358,8 +362,8 @@ impl BackendBot {
                     self.indexer.add_documents_batch(batch).await?;
                     batch = Vec::new();
                     info!(
-                        "Indexed {} messages from {} (up to msg_id {})",
-                        indexed_count, share_id, msg_id
+                        "[{}] indexed {} messages from chat {} (up to msg_id {})",
+                        self.id, indexed_count, share_id, msg_id
                     );
                 }
             }
@@ -384,10 +388,14 @@ impl BackendBot {
         }
 
         info!(
-            "Download complete for {}: fetched {}, indexed {}",
-            share_id, fetched_count, indexed_count
+            "[{}] download complete for chat {}: fetched {}, indexed {}, msg_id range {}..{}",
+            self.id, share_id, fetched_count, indexed_count, fetched_min_msg_id, fetched_max_msg_id
         );
-        Ok(indexed_count)
+        Ok(DownloadResult {
+            indexed_count,
+            min_msg_id: fetched_min_msg_id,
+            max_msg_id: fetched_max_msg_id,
+        })
     }
 
     /// Clear index (optionally for specific chats)
@@ -404,8 +412,8 @@ impl BackendBot {
                     // Delete documents from index
                     self.indexer.delete_chat_documents(chat_id).await?;
                     info!(
-                        "Cleared chat {} from monitoring and deleted documents from index",
-                        chat_id
+                        "[{}] cleared chat {} from monitoring and index",
+                        self.id, chat_id
                     );
                     self.newest_msg.remove(&chat_id);
                     cleared_chats.push(chat_id);
@@ -426,8 +434,8 @@ impl BackendBot {
             }
 
             info!(
-                "Cleared all {} monitored chats and deleted documents from index",
-                all_chats.len()
+                "[{}] cleared all {} monitored chats from index",
+                self.id, all_chats.len()
             );
             self.monitored_chats.clear();
             self.newest_msg.clear();
@@ -469,14 +477,15 @@ impl BackendBot {
         let client = match self.client.get() {
             Some(c) => c.clone(),
             None => {
-                warn!("Cannot refresh chat names: client not initialized yet");
+                warn!("[{}] cannot refresh chat names: client not initialized yet", self.id);
                 return;
             }
         };
         let chat_cache = Arc::clone(&self.chat_cache);
+        let backend_id = self.id.clone();
 
         tokio::spawn(async move {
-            info!("Background: Refreshing chat name cache...");
+            info!("[{}] refreshing chat name cache...", backend_id);
             let mut count = 0;
             let mut dialogs = client.iter_dialogs();
 
@@ -491,7 +500,7 @@ impl BackendBot {
                 }
             }
 
-            debug!("Background: Refreshed {} chat names in cache", count);
+            debug!("[{}] refreshed {} chat names in cache", backend_id, count);
         });
     }
 
@@ -643,6 +652,7 @@ impl BackendBot {
         // Extract text
         let text = message.text();
         if let Some(content) = self.extract_text(text) {
+            let msg_id = message.id();
             let index_msg = self.message_to_index_msg(&message, content.clone())?;
 
             // Add to index
@@ -651,9 +661,8 @@ impl BackendBot {
             // Update newest message
             self.newest_msg.insert(share_id, index_msg);
 
-            // Log with brief excerpt
             let brief = brief_content(&content, 20);
-            debug!("Indexed new message in chat {}: {:?}", share_id, brief);
+            debug!("[{}] indexed new msg chat={} msg_id={}: {:?}", self.id, share_id, msg_id, brief);
         }
 
         Ok(())
@@ -678,9 +687,8 @@ impl BackendBot {
             // Update in index
             self.indexer.update_document(&url, &content).await?;
 
-            // Log with brief excerpt
             let brief = brief_content(&content, 20);
-            debug!("Updated edited message in chat {}: {:?}", share_id, brief);
+            debug!("[{}] updated edited msg chat={} msg_id={}: {:?}", self.id, share_id, msg_id, brief);
         }
 
         Ok(())
@@ -698,21 +706,22 @@ impl BackendBot {
                 return Ok(());
             }
 
+            let msg_ids = deletion.messages();
+
             // Delete each message from index
-            for msg_id in deletion.messages() {
+            for msg_id in msg_ids {
                 let url = format!("https://t.me/c/{}/{}", share_id, msg_id);
                 self.indexer.delete_document(&url).await?;
             }
 
             info!(
-                "Deleted {} messages from channel {}",
-                deletion.messages().len(),
-                share_id
+                "[{}] deleted {} messages from chat {}: msg_ids={:?}",
+                self.id, msg_ids.len(), share_id, msg_ids
             );
         } else {
             // For non-channel deletions, we can't determine which chat they're from
             // This is a limitation of the Telegram API
-            warn!("Received deletion for non-channel chat, cannot process");
+            warn!("[{}] received deletion for non-channel chat, cannot process (msg_ids={:?})", self.id, deletion.messages());
         }
 
         Ok(())

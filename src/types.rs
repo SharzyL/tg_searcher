@@ -88,6 +88,19 @@ pub struct SearchResult {
     pub total_results: usize,
 }
 
+/// Result of a download_history operation
+#[derive(Debug, Clone)]
+pub struct DownloadResult {
+    /// Number of messages indexed
+    pub indexed_count: usize,
+
+    /// Minimum message ID fetched (oldest)
+    pub min_msg_id: i32,
+
+    /// Maximum message ID fetched (newest)
+    pub max_msg_id: i32,
+}
+
 /// Progress update for download_history operation
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {

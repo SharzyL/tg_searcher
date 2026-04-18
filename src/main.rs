@@ -248,7 +248,7 @@ fn init_logging(debug: bool, debug_all: bool) {
 
     // grammers_client::client::updates emits spurious "missing its hash" warnings because
     // PeerAuthCache starts empty and isn't loaded from the session store (grammers limitation).
-    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn";
+    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn,os_info=warn";
     let filter = if debug_all {
         EnvFilter::new("debug")
     } else if debug {
