@@ -6,7 +6,6 @@
 use crate::types::{Error, HighlightedSnippet, IndexMsg, Result, SearchHit, SearchResult};
 use jieba_rs::Jieba;
 use std::collections::HashMap;
-use tracing::warn;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -16,6 +15,7 @@ use tantivy::schema::*;
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term, doc};
+use tracing::warn;
 
 /// Chinese tokenizer using jieba
 #[derive(Clone)]
@@ -366,7 +366,6 @@ impl Indexer {
         let mut query = query_parser
             .parse_query(query_str)
             .map_err(|e| Error::Index(e.to_string()))?;
-
 
         // Add chat filter if specified
         if let Some(chats) = in_chats {

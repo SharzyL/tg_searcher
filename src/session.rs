@@ -9,8 +9,8 @@ use dashmap::DashMap;
 use grammers_client::{Client, SignInError};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use grammers_session::storages::SqliteSession;
-use std::io::Write;
-use std::path::Path;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -18,6 +18,9 @@ use tracing::{debug, info};
 pub struct ClientSession {
     /// Session name for logging
     name: String,
+
+    /// Path to session file on disk
+    session_file: PathBuf,
 
     /// SQLite session storage
     session_storage: Arc<SqliteSession>,
@@ -44,8 +47,6 @@ impl ClientSession {
         api_hash: &str,
         proxy: Option<ProxyConfig>,
     ) -> Result<Self> {
-        info!("Creating session: {}", name);
-
         // Load or create SQLite session
         let session_storage = Arc::new(
             SqliteSession::open(session_file)
@@ -72,7 +73,7 @@ impl ClientSession {
                 format!("{}://{}:{}", p.scheme, p.host, p.port)
             };
 
-            info!("Session {} uses proxy: {}", name, url);
+            info!("[{}] uses proxy: {}", name, url);
             Some(url)
         } else {
             None
@@ -80,6 +81,7 @@ impl ClientSession {
 
         Ok(Self {
             name,
+            session_file: session_file.to_path_buf(),
             session_storage,
             api_id,
             api_hash: api_hash.to_string(),
@@ -90,7 +92,7 @@ impl ClientSession {
 
     /// Authenticate the session if needed
     pub async fn start(&self, phone: &str) -> Result<()> {
-        info!("Authenticating session: {}", self.name);
+        info!("[{}] authenticating", self.name);
 
         // Create temporary client for authentication
         let pool = if let Some(ref proxy_url) = self.proxy {
@@ -114,11 +116,24 @@ impl ClientSession {
             .await
             .map_err(|e| Error::Telegram(format!("Failed to check authorization: {}", e)))?
         {
-            info!("Session {} is already authorized", self.name);
+            info!("[{}] already authorized", self.name);
             return Ok(());
         }
 
-        info!("Session {} needs authentication", self.name);
+        info!("[{}] needs authentication", self.name);
+
+        // Interactive login requires a terminal for code/password input
+        if !std::io::stdin().is_terminal() {
+            let uid = nix::unistd::geteuid();
+            let gid = nix::unistd::getegid();
+            return Err(Error::Config(format!(
+                "Session '{}' requires interactive login but stdin is not a TTY.\n\
+                Please run the program in a terminal for first-time authentication.\n\
+                After login, make the session file readable/writable by the service \
+                (current uid={}, gid={}): chown {}:{} {:?}",
+                self.name, uid, gid, uid, gid, self.session_file
+            )));
+        }
 
         // Request login code
         let token = client
@@ -171,10 +186,7 @@ impl ClientSession {
     /// Populate access hashes and chat name cache by fetching dialogs
     /// Should be called after authentication to ensure clients can access channels
     pub async fn populate_access_hashes(&self) -> Result<usize> {
-        info!(
-            "Populating access hashes and chat cache for session: {}",
-            self.name
-        );
+        info!("[{}] Populating access hashes and chat cache", self.name);
 
         // Create temporary client for fetching dialogs
         let pool = if let Some(ref proxy_url) = self.proxy {
@@ -212,9 +224,9 @@ impl ClientSession {
         }
 
         debug!(
-            "Populated access hashes and {} chat names for session {}",
+            "[{}] Populated access hashes and {} chat names",
+            self.name,
             self.chat_cache.len(),
-            self.name
         );
 
         // Cleanup: drop client and abort runner task

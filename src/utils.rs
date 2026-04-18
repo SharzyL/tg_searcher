@@ -15,7 +15,14 @@ pub fn brief_content(content: &str, trim_len: usize) -> String {
         content.to_string()
     } else {
         let head: String = content.chars().take(trim_len - 4).collect();
-        let tail: String = content.chars().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+        let tail: String = content
+            .chars()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         format!("{}…{}", head, tail)
     }
 }
@@ -102,11 +109,9 @@ impl MessageBuilder {
         self.push(s);
         let length = self.utf16_offset - offset;
         if length > 0 {
-            self.entities
-                .push(tl::enums::MessageEntity::Bold(tl::types::MessageEntityBold {
-                    offset,
-                    length,
-                }));
+            self.entities.push(tl::enums::MessageEntity::Bold(
+                tl::types::MessageEntityBold { offset, length },
+            ));
         }
     }
 
@@ -148,11 +153,12 @@ impl MessageBuilder {
     pub fn push_bold_since(&mut self, start_offset: i32) {
         let length = self.utf16_offset - start_offset;
         if length > 0 {
-            self.entities
-                .push(tl::enums::MessageEntity::Bold(tl::types::MessageEntityBold {
+            self.entities.push(tl::enums::MessageEntity::Bold(
+                tl::types::MessageEntityBold {
                     offset: start_offset,
                     length,
-                }));
+                },
+            ));
         }
     }
 
@@ -180,16 +186,11 @@ impl MessageBuilder {
 
         for (byte_pos, ch) in fragment.char_indices() {
             // Advance past highlight ranges we've passed
-            while highlight_iter
-                .peek()
-                .is_some_and(|r| byte_pos >= r.end)
-            {
+            while highlight_iter.peek().is_some_and(|r| byte_pos >= r.end) {
                 highlight_iter.next();
             }
 
-            let is_bold = highlight_iter
-                .peek()
-                .is_some_and(|r| byte_pos >= r.start);
+            let is_bold = highlight_iter.peek().is_some_and(|r| byte_pos >= r.start);
 
             if is_bold != chunk_is_bold && !chunk.is_empty() {
                 if chunk_is_bold {
@@ -370,14 +371,14 @@ mod tests {
     fn test_message_builder_cjk_offsets() {
         // CJK characters are 1 UTF-16 unit each but multi-byte in UTF-8
         let mut b = MessageBuilder::new();
-        b.push("你好");  // 2 chars, 2 UTF-16 units
-        b.push_bold("世界");  // 2 chars, 2 UTF-16 units
+        b.push("你好"); // 2 chars, 2 UTF-16 units
+        b.push_bold("世界"); // 2 chars, 2 UTF-16 units
         let (text, entities) = b.build();
         assert_eq!(text, "你好世界");
         match &entities[0] {
             tl::enums::MessageEntity::Bold(e) => {
-                assert_eq!(e.offset, 2);  // after "你好"
-                assert_eq!(e.length, 2);  // "世界"
+                assert_eq!(e.offset, 2); // after "你好"
+                assert_eq!(e.length, 2); // "世界"
             }
             _ => panic!("expected Bold"),
         }
@@ -386,13 +387,13 @@ mod tests {
     #[test]
     fn test_message_builder_strips_invisible_chars() {
         let mut b = MessageBuilder::new();
-        b.push("hello\u{200f}");  // RTL mark should be stripped
+        b.push("hello\u{200f}"); // RTL mark should be stripped
         b.push_bold("world");
         let (text, entities) = b.build();
-        assert_eq!(text, "helloworld");  // no RTL mark
+        assert_eq!(text, "helloworld"); // no RTL mark
         match &entities[0] {
             tl::enums::MessageEntity::Bold(e) => {
-                assert_eq!(e.offset, 5);  // "hello" = 5, no RTL mark
+                assert_eq!(e.offset, 5); // "hello" = 5, no RTL mark
                 assert_eq!(e.length, 5);
             }
             _ => panic!("expected Bold"),
@@ -407,11 +408,11 @@ mod tests {
         b.push_underline("\u{200f}Sharzy");
         b.push(") after");
         let (text, entities) = b.build();
-        assert_eq!(text, "(Sharzy) after");  // RTL mark stripped
+        assert_eq!(text, "(Sharzy) after"); // RTL mark stripped
         match &entities[0] {
             tl::enums::MessageEntity::Underline(e) => {
-                assert_eq!(e.offset, 1);   // after "("
-                assert_eq!(e.length, 6);   // "Sharzy" without RTL mark
+                assert_eq!(e.offset, 1); // after "("
+                assert_eq!(e.length, 6); // "Sharzy" without RTL mark
             }
             _ => panic!("expected Underline"),
         }
@@ -426,8 +427,8 @@ mod tests {
         let (_, entities) = b.build();
         match &entities[0] {
             tl::enums::MessageEntity::Bold(e) => {
-                assert_eq!(e.offset, 2);  // 🎉 = 2 UTF-16 units
-                assert_eq!(e.length, 2);  // "ok"
+                assert_eq!(e.offset, 2); // 🎉 = 2 UTF-16 units
+                assert_eq!(e.length, 2); // "ok"
             }
             _ => panic!("expected Bold"),
         }
@@ -450,7 +451,7 @@ mod tests {
     fn test_message_builder_highlighted_snippet() {
         let snippet = HighlightedSnippet {
             fragment: "hello world test".to_string(),
-            highlights: vec![6..11],  // "world"
+            highlights: vec![6..11], // "world"
         };
         let mut b = MessageBuilder::new();
         b.push("prefix ");
@@ -462,7 +463,7 @@ mod tests {
         assert_eq!(entities.len(), 2);
         match &entities[0] {
             tl::enums::MessageEntity::TextUrl(e) => {
-                assert_eq!(e.offset, 7);  // after "prefix "
+                assert_eq!(e.offset, 7); // after "prefix "
                 assert_eq!(e.length, 16); // "hello world test"
                 assert_eq!(e.url, "https://t.me/c/123/1");
             }
@@ -470,8 +471,8 @@ mod tests {
         }
         match &entities[1] {
             tl::enums::MessageEntity::Bold(e) => {
-                assert_eq!(e.offset, 13);  // "prefix " (7) + "hello " (6) = 13
-                assert_eq!(e.length, 5);   // "world"
+                assert_eq!(e.offset, 13); // "prefix " (7) + "hello " (6) = 13
+                assert_eq!(e.length, 5); // "world"
             }
             _ => panic!("expected Bold"),
         }
@@ -494,7 +495,7 @@ mod tests {
     fn test_message_builder_highlighted_snippet_cjk() {
         let snippet = HighlightedSnippet {
             fragment: "人人都在说这个人很好".to_string(),
-            highlights: vec![0..3],  // "人" (3 bytes in UTF-8)
+            highlights: vec![0..3], // "人" (3 bytes in UTF-8)
         };
         let mut b = MessageBuilder::new();
         b.push_highlighted_snippet(&snippet, "https://t.me/c/123/1");

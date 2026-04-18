@@ -67,6 +67,12 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create directories: {}", e))?;
 
+    info!(
+        "Creating {} session(s), runtime dir '{:?}'",
+        config.sessions.len(),
+        config.common.runtime_dir
+    );
+
     // Initialize sessions
     let mut sessions = std::collections::HashMap::new();
     for session_config in &config.sessions {
@@ -104,8 +110,6 @@ async fn main() -> Result<()> {
 
         sessions.insert(session_config.name.clone(), std::sync::Arc::new(session));
     }
-
-    debug!("Created {} session(s)", sessions.len());
 
     // Initialize backends with indexers
     let mut backends = std::collections::HashMap::new();
@@ -248,7 +252,7 @@ fn init_logging(debug: bool, debug_all: bool) {
 
     // grammers_client::client::updates emits spurious "missing its hash" warnings because
     // PeerAuthCache starts empty and isn't loaded from the session store (grammers limitation).
-    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn,os_info=warn";
+    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn,os_info=warn,html5ever=warn";
     let filter = if debug_all {
         EnvFilter::new("debug")
     } else if debug {

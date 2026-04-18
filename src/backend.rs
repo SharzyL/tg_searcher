@@ -101,7 +101,7 @@ impl BackendBot {
 
     /// Run the event loop to monitor messages
     pub async fn run(&self) -> Result<()> {
-        info!("Starting event loop for backend: {}", self.id);
+        info!("[{}] starting event loop for backend", self.id);
 
         // Create SenderPool and Client for all operations (not just updates)
         let pool = Self::create_sender_pool(&self.session);
@@ -124,9 +124,17 @@ impl BackendBot {
         for entry in self.monitored_chats.iter() {
             let chat_id = *entry.key();
             if let Some(name) = self.chat_cache.get(&chat_id) {
-                info!("[{}] ready to monitor \"{}\" ({})", self.id, name.value(), chat_id);
+                info!(
+                    "[{}] ready to monitor \"{}\" ({})",
+                    self.id,
+                    name.value(),
+                    chat_id
+                );
             } else {
-                info!("[{}] ready to monitor chat {} (name not in cache)", self.id, chat_id);
+                info!(
+                    "[{}] ready to monitor chat {} (name not in cache)",
+                    self.id, chat_id
+                );
             }
         }
 
@@ -140,43 +148,67 @@ impl BackendBot {
 
         info!("[{}] streaming updates, waiting for messages...", self.id);
         loop {
-            match updates.next().await {
-                Ok(update) => {
-                    match update {
-                        Update::NewMessage(message) => {
-                            let chat_id = message.peer_id().bot_api_dialog_id();
-                            let share_id = crate::utils::get_share_id(chat_id);
-                            let msg_id = message.id();
-                            debug!("[{}] new message in chat {} msg_id={}", self.id, share_id, msg_id);
-                            if let Err(e) = self.handle_new_message(message).await {
-                                error!("[{}] error handling new message (chat={} msg_id={}): {}", self.id, share_id, msg_id, e);
-                            }
-                        }
-                        Update::MessageEdited(message) => {
-                            let chat_id = message.peer_id().bot_api_dialog_id();
-                            let share_id = crate::utils::get_share_id(chat_id);
-                            let msg_id = message.id();
-                            debug!("[{}] edited message in chat {} msg_id={}", self.id, share_id, msg_id);
-                            if let Err(e) = self.handle_message_edited(message).await {
-                                error!("[{}] error handling edited message (chat={} msg_id={}): {}", self.id, share_id, msg_id, e);
-                            }
-                        }
-                        Update::MessageDeleted(deletion) => {
-                            let channel_id = deletion.channel_id().map(get_share_id);
-                            let msg_ids = deletion.messages();
-                            debug!("[{}] message deletion in chat {:?} msg_ids={:?}", self.id, channel_id, msg_ids);
-                            if let Err(e) = self.handle_message_deleted(deletion).await {
-                                error!("[{}] error handling message deletion (chat={:?}): {}", self.id, channel_id, e);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+            let update = match updates.next().await {
+                Ok(update) => update,
                 Err(e) => {
                     error!("[{}] error getting update: {}", self.id, e);
-                    // Break on error - will cause backend task to exit
                     break;
                 }
+            };
+
+            match update {
+                Update::NewMessage(message) => {
+                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id());
+                    if !self.should_monitor(share_id) {
+                        continue;
+                    }
+                    let msg_id = message.id();
+                    debug!(
+                        "[{}] new message in chat {} msg_id={}",
+                        self.id, share_id, msg_id
+                    );
+                    if let Err(e) = self.handle_new_message(message).await {
+                        error!(
+                            "[{}] error handling new message (chat={} msg_id={}): {}",
+                            self.id, share_id, msg_id, e
+                        );
+                    }
+                }
+                Update::MessageEdited(message) => {
+                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id());
+                    if !self.should_monitor(share_id) {
+                        continue;
+                    }
+                    let msg_id = message.id();
+                    debug!(
+                        "[{}] edited message in chat {} msg_id={}",
+                        self.id, share_id, msg_id
+                    );
+                    if let Err(e) = self.handle_message_edited(message).await {
+                        error!(
+                            "[{}] error handling edited message (chat={} msg_id={}): {}",
+                            self.id, share_id, msg_id, e
+                        );
+                    }
+                }
+                Update::MessageDeleted(deletion) => {
+                    let channel_id = deletion.channel_id().map(get_share_id);
+                    if !channel_id.is_some_and(|id| self.should_monitor(id)) {
+                        continue;
+                    }
+                    let msg_ids = deletion.messages();
+                    debug!(
+                        "[{}] message deletion in chat {:?} msg_ids={:?}",
+                        self.id, channel_id, msg_ids
+                    );
+                    if let Err(e) = self.handle_message_deleted(deletion).await {
+                        error!(
+                            "[{}] error handling message deletion (chat={:?}): {}",
+                            self.id, channel_id, e
+                        );
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -321,7 +353,10 @@ impl BackendBot {
             if let Some(ref callback) = progress_callback
                 && fetched_count.is_multiple_of(FETCH_PROGRESS_BATCH_SIZE)
             {
-                info!("[{}] fetched {} messages from chat {}", self.id, fetched_count, share_id);
+                info!(
+                    "[{}] fetched {} messages from chat {}",
+                    self.id, fetched_count, share_id
+                );
                 callback(DownloadProgress {
                     downloaded: fetched_count,
                     chat_id: share_id,
@@ -435,7 +470,8 @@ impl BackendBot {
 
             info!(
                 "[{}] cleared all {} monitored chats from index",
-                self.id, all_chats.len()
+                self.id,
+                all_chats.len()
             );
             self.monitored_chats.clear();
             self.newest_msg.clear();
@@ -477,7 +513,10 @@ impl BackendBot {
         let client = match self.client.get() {
             Some(c) => c.clone(),
             None => {
-                warn!("[{}] cannot refresh chat names: client not initialized yet", self.id);
+                warn!(
+                    "[{}] cannot refresh chat names: client not initialized yet",
+                    self.id
+                );
                 return;
             }
         };
@@ -639,17 +678,11 @@ impl BackendBot {
         })
     }
 
-    /// Handle new message event
+    /// Handle new message event (caller already checked should_monitor)
     async fn handle_new_message(&self, message: UpdateMessage) -> Result<()> {
         let chat_id = message.peer_id().bot_api_dialog_id();
         let share_id = get_share_id(chat_id);
 
-        // Check if we should monitor this chat
-        if !self.should_monitor(share_id) {
-            return Ok(());
-        }
-
-        // Extract text
         let text = message.text();
         if let Some(content) = self.extract_text(text) {
             let msg_id = message.id();
@@ -662,23 +695,20 @@ impl BackendBot {
             self.newest_msg.insert(share_id, index_msg);
 
             let brief = brief_content(&content, 20);
-            debug!("[{}] indexed new msg chat={} msg_id={}: {:?}", self.id, share_id, msg_id, brief);
+            debug!(
+                "[{}] indexed new msg chat={} msg_id={}: {:?}",
+                self.id, share_id, msg_id, brief
+            );
         }
 
         Ok(())
     }
 
-    /// Handle message edited event
+    /// Handle message edited event (caller already checked should_monitor)
     async fn handle_message_edited(&self, message: UpdateMessage) -> Result<()> {
         let chat_id = message.peer_id().bot_api_dialog_id();
         let share_id = get_share_id(chat_id);
 
-        // Check if we should monitor this chat
-        if !self.should_monitor(share_id) {
-            return Ok(());
-        }
-
-        // Extract new text
         let text = message.text();
         if let Some(content) = self.extract_text(text) {
             let msg_id = message.id();
@@ -688,41 +718,32 @@ impl BackendBot {
             self.indexer.update_document(&url, &content).await?;
 
             let brief = brief_content(&content, 20);
-            debug!("[{}] updated edited msg chat={} msg_id={}: {:?}", self.id, share_id, msg_id, brief);
+            debug!(
+                "[{}] updated edited msg chat={} msg_id={}: {:?}",
+                self.id, share_id, msg_id, brief
+            );
         }
 
         Ok(())
     }
 
-    /// Handle message deleted event
+    /// Handle message deleted event (caller already checked should_monitor and channel_id)
     async fn handle_message_deleted(&self, deletion: MessageDeletion) -> Result<()> {
-        // MessageDeletion only has channel_id for channels, not for regular chats
-        // For now, we'll need to track deletions differently or skip non-channel deletions
-        if let Some(channel_id) = deletion.channel_id() {
-            let share_id = get_share_id(channel_id);
+        let share_id = get_share_id(deletion.channel_id().unwrap());
+        let msg_ids = deletion.messages();
 
-            // Check if we should monitor this chat
-            if !self.should_monitor(share_id) {
-                return Ok(());
-            }
-
-            let msg_ids = deletion.messages();
-
-            // Delete each message from index
-            for msg_id in msg_ids {
-                let url = format!("https://t.me/c/{}/{}", share_id, msg_id);
-                self.indexer.delete_document(&url).await?;
-            }
-
-            info!(
-                "[{}] deleted {} messages from chat {}: msg_ids={:?}",
-                self.id, msg_ids.len(), share_id, msg_ids
-            );
-        } else {
-            // For non-channel deletions, we can't determine which chat they're from
-            // This is a limitation of the Telegram API
-            warn!("[{}] received deletion for non-channel chat, cannot process (msg_ids={:?})", self.id, deletion.messages());
+        for msg_id in msg_ids {
+            let url = format!("https://t.me/c/{}/{}", share_id, msg_id);
+            self.indexer.delete_document(&url).await?;
         }
+
+        info!(
+            "[{}] deleted {} messages from chat {}: msg_ids={:?}",
+            self.id,
+            msg_ids.len(),
+            share_id,
+            msg_ids
+        );
 
         Ok(())
     }

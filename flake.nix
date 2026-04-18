@@ -29,7 +29,7 @@
             ln -s ${rustPlatform.rustLibSrc} $out/src
           '';
 
-          cargoHash = "sha256-rwUNBN6gf94p+L3TgfNYwsjNOxQjI5PxxdEtJk5nwaU=";
+          cargoHash = "sha256-3dShJ1fU+uZOMjrd34vZYGRmJLOcF5ppKPBPRfdWd70=";
           meta.mainProgram = name;
         };
 

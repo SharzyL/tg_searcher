@@ -156,7 +156,10 @@ impl BotFrontend {
         {
             Ok(status) => status,
             Err(e) => {
-                warn!("[{}] failed to generate index status for greeting: {}", self.id, e);
+                warn!(
+                    "[{}] failed to generate index status for greeting: {}",
+                    self.id, e
+                );
                 format!(
                     "Backend: <b>{}</b>\nMonitored chats: <b>{}</b>",
                     self.backend.id(),
@@ -176,12 +179,13 @@ impl BotFrontend {
         let greeting_msg_id = match self.send_message(self.admin_id, &greeting, None).await {
             Ok(msg_id) => msg_id,
             Err(e) => {
-                warn!("[{}] failed to send greeting message to admin: {}", self.id, e);
+                warn!(
+                    "[{}] failed to send greeting message to admin: {}",
+                    self.id, e
+                );
                 -1 // Invalid message ID
             }
         };
-
-
 
         // Spawn task to update greeting when cache is ready
         if greeting_msg_id > 0 {
@@ -306,7 +310,10 @@ impl BotFrontend {
             && sender_id != self.admin_id
             && !self.config.private_whitelist.contains(&sender_id)
         {
-            warn!("[{}] unauthorized user {} tried to use bot", self.id, sender_id);
+            warn!(
+                "[{}] unauthorized user {} tried to use bot",
+                self.id, sender_id
+            );
             return Ok(());
         }
 
@@ -336,7 +343,10 @@ impl BotFrontend {
                 }
             };
             if let Err(send_err) = self.send_message(chat_id, &error_msg, None).await {
-                error!("[{}] failed to send error message to user: {}", self.id, send_err);
+                error!(
+                    "[{}] failed to send error message to user: {}",
+                    self.id, send_err
+                );
             }
         }
 
@@ -365,7 +375,10 @@ impl BotFrontend {
             }
         };
 
-        debug!("[{}] callback query from {}: {}", self.id, chat_id, data_str);
+        debug!(
+            "[{}] callback query from {}: {}",
+            self.id, chat_id, data_str
+        );
 
         // Answer the callback query to remove loading state
         if let Err(e) = query.answer().send().await {
@@ -485,7 +498,10 @@ impl BotFrontend {
         // Edit message
         self.edit_message(chat_id, message_id, &response, None)
             .await?;
-        debug!("[{}] selected chat: {} ({})", self.id, chat_name, selected_chat_id);
+        debug!(
+            "[{}] selected chat: {} ({})",
+            self.id, chat_name, selected_chat_id
+        );
 
         Ok(())
     }
@@ -498,7 +514,10 @@ impl BotFrontend {
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
-        info!("[{}] user message in chat {}: {}", self.id, chat_id, text);
+        info!(
+            "[{}] handling message in chat {}: {}",
+            self.id, chat_id, text
+        );
 
         let trimmed = text.trim();
 
@@ -531,8 +550,6 @@ impl BotFrontend {
         text: &str,
         reply_to: Option<i32>,
     ) -> Result<()> {
-        info!("[{}] admin message: {}", self.id, text);
-
         let trimmed = text.trim();
 
         if trimmed.starts_with("/stat") {
@@ -645,7 +662,11 @@ impl BotFrontend {
         }
 
         self.send_message(chat_id, &response, Some(buttons)).await?;
-        info!("[{}] sent chat list with {} buttons", self.id, display_chats.len());
+        info!(
+            "[{}] sent chat list with {} buttons",
+            self.id,
+            display_chats.len()
+        );
 
         Ok(())
     }
@@ -681,7 +702,10 @@ impl BotFrontend {
         // Get selected chat from reply
         let chats = self.query_selected_chat(chat_id, reply_to).await?;
 
-        info!("[{}] search \"{}\" in chats {:?}", self.id, query, chats);
+        info!(
+            "[{}] search \"{}\" within chats {:?} (None means all)",
+            self.id, query, chats
+        );
 
         let start_time = Instant::now();
         let result = self
@@ -697,7 +721,10 @@ impl BotFrontend {
 
         // Send search results and get message_id; fall back to HTML on failure
         let sent_message_id = self.send_input_message(chat_id, message).await?;
-        info!("[{}] sent search results: {} hits", self.id, result.total_results);
+        info!(
+            "[{}] sent search results: {} hits",
+            self.id, result.total_results
+        );
 
         // Store query for pagination
         let query_key = format!("{}:query_text:{}:{}", self.id, chat_id, sent_message_id);
@@ -899,7 +926,10 @@ impl BotFrontend {
 
         if !ids.is_empty() {
             for &target_chat_id in &ids {
-                info!("[{}] add chat {} to monitored_chats", self.id, target_chat_id);
+                info!(
+                    "[{}] add chat {} to monitored_chats",
+                    self.id, target_chat_id
+                );
                 let chat_html = self.backend.format_dialog_html(target_chat_id).await?;
                 let response = format!("{} has been added to monitoring list", chat_html);
                 self.send_message(chat_id, &response, None).await?;
@@ -935,7 +965,11 @@ impl BotFrontend {
                 cleared.len()
             );
             self.send_message(chat_id, &response, None).await?;
-            info!("[{}] all indexes cleared ({} chats)", self.id, cleared.len());
+            info!(
+                "[{}] all indexes cleared ({} chats)",
+                self.id,
+                cleared.len()
+            );
         } else {
             let (ids, failed) = if chat_args.is_empty() {
                 match self.query_selected_chat(chat_id, reply_to).await? {
@@ -1054,7 +1088,11 @@ impl BotFrontend {
         response.push_str("\n\nUse /refresh_chat_names to update the cache.");
 
         self.send_message(chat_id, &response, None).await?;
-        info!("[{}] sent find results: {} chats", self.id, found_chat_ids.len());
+        info!(
+            "[{}] sent find results: {} chats",
+            self.id,
+            found_chat_ids.len()
+        );
 
         Ok(())
     }
@@ -1095,7 +1133,7 @@ impl BotFrontend {
         (ids, failed)
     }
 
-    /// Render search results as HTML
+    /// Render search results
     async fn render_response_message(
         &self,
         result: &SearchResult,
@@ -1213,7 +1251,10 @@ impl BotFrontend {
             .await
         {
             Ok(_) => debug!("[{}] registered default bot commands", self.id),
-            Err(e) => warn!("[{}] failed to register default bot commands: {}", self.id, e),
+            Err(e) => warn!(
+                "[{}] failed to register default bot commands: {}",
+                self.id, e
+            ),
         }
 
         // Register admin commands (visible only to admin in PM)
@@ -1358,11 +1399,7 @@ impl BotFrontend {
     }
 
     /// Send a pre-built InputMessage to a chat
-    async fn send_input_message(
-        &self,
-        chat_id: i64,
-        message: InputMessage,
-    ) -> Result<i32> {
+    async fn send_input_message(&self, chat_id: i64, message: InputMessage) -> Result<i32> {
         let client = self
             .client
             .as_ref()
