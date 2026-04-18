@@ -1143,8 +1143,9 @@ impl BotFrontend {
         let mut builder = MessageBuilder::new();
 
         builder.push(&format!(
-            "Found {} results in {:.3} seconds:\n\n",
-            result.total_results, used_time
+            "Found {} results in {:.0} ms:\n\n",
+            result.total_results,
+            used_time * 1000.0
         ));
 
         // Pre-translate unique chat IDs to avoid redundant lookups

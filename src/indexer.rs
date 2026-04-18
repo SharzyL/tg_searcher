@@ -493,6 +493,11 @@ impl Indexer {
         })
     }
 
+    /// Total number of documents in the index (O(1))
+    pub fn num_docs(&self) -> u64 {
+        self.reader.searcher().num_docs()
+    }
+
     /// List all indexed chat IDs
     pub async fn list_indexed_chats(&self) -> Result<Vec<i64>> {
         let searcher = self.reader.searcher();

@@ -248,9 +248,7 @@ impl BackendBot {
             let results = self.indexer.search("*", Some(&[chat_id]), 1, 1).await?;
             Ok(results.total_results == 0)
         } else {
-            // Check if entire index is empty
-            let chats = self.indexer.list_indexed_chats().await?;
-            Ok(chats.is_empty())
+            Ok(self.indexer.num_docs() == 0)
         }
     }
 
