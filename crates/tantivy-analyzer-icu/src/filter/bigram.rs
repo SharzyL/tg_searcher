@@ -66,10 +66,22 @@ impl<T: Tokenizer> Tokenizer for CJKBigramWrapper<T> {
                 continue;
             }
 
-            // Collect a run of same-group CJK tokens.
+            // Collect a run of same-group CJK tokens whose original-text
+            // offsets are contiguous or overlapping. An offset gap (from a
+            // space, punctuation, etc.) breaks the run: "京东" → bigram,
+            // "京 东" → no bigram.
+            //
+            // The `<=` covers exactly two cases (offset mapping is monotonic,
+            // so no others exist):
+            //   ==  adjacent source regions: 京(0,3) 东(3,6)
+            //   <   same source char expanded by NFKC: ㍿ → 株(8,11) 式(8,11)
+            // A gap (>) means the original text has intervening content.
             let run_start = i;
             i += 1;
-            while i < len && annotated[i].group == group {
+            while i < len
+                && annotated[i].group == group
+                && annotated[i].token.offset_from <= annotated[i - 1].token.offset_to
+            {
                 i += 1;
             }
             let run = &annotated[run_start..i];

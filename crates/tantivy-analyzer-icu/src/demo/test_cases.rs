@@ -66,6 +66,7 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("multi-1", "北京 在 东京"),
     ("multi-2", "北京，东京"),
     ("multi-3", "北京。东京"),
+    ("multi-4", "京 东"), // minimal: two Han chars separated by a single space
     // === CJK Extensions ===
     ("ext-1", "㐀是一个字"),
     ("ext-2", "𠀀是另一个字"),
@@ -201,6 +202,14 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         must_not_match: &[],
         expect_empty: false,
         description: "'株式会社' should match ㍿ doc",
+    },
+    QueryTestCase {
+        name: "cross_expansion_bigram",
+        query: "治株",
+        must_match: &["sig-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Bigram spanning NFKC expansion boundary: 治 from ㍾, 株 from ㍿",
     },
     // === Japanese: Han-Kana bigrams ===
     QueryTestCase {
@@ -534,6 +543,38 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         expect_empty: false,
         description: "Fullwidth uppercase query (double normalization: fullwidth→half + casefold)",
     },
+    QueryTestCase {
+        name: "fullwidth_hello_query",
+        query: "\u{FF28}\u{FF45}\u{FF4C}\u{FF4C}\u{FF4F}", // Ｈｅｌｌｏ
+        must_match: &["en-1", "mix-3"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Fullwidth 'Ｈｅｌｌｏ' query matches ASCII 'Hello' docs",
+    },
+    QueryTestCase {
+        name: "halfwidth_katakana_query",
+        query: "\u{FF7A}\u{FF9D}\u{FF8B}\u{FF9F}\u{FF6D}\u{FF70}\u{FF80}", // ｺﾝﾋﾟｭｰﾀ
+        must_match: &["ja-3"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Halfwidth katakana query matches fullwidth katakana doc",
+    },
+    QueryTestCase {
+        name: "circled_digits_query",
+        query: "①②③",
+        must_match: &["norm-4"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Circled digit query normalizes to plain digits, matching circled digit doc",
+    },
+    QueryTestCase {
+        name: "enclosed_cjk_query",
+        query: "㈱東京",
+        must_match: &["norm-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Enclosed ㈱ in query normalizes to (株), matching doc containing ㈱東京",
+    },
     // P0: Variation selector symmetry (section 3.3)
     QueryTestCase {
         name: "vs_query_no_vs_doc",
@@ -799,16 +840,83 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Reversed order bigram",
     },
     // P2: Cross-segment CJK (section 13)
-    // "京东" bigram doesn't exist across segments, but individual chars 京 and 东
-    // match via unigram fallback. The key test is that multi docs don't rank as
-    // high as a doc containing the actual "京东" bigram (none exists).
+    // Space-separated Han chars in a document are NOT bigrammed at index time.
+    // "京东" as a continuous bigram query should not match them.
+    // multi-4 ("京 东") is the minimal case: two adjacent Han chars separated
+    // by a single space. The bigram index has no "京东" entry for this doc.
     QueryTestCase {
-        name: "cross_segment_bigram_fails",
+        name: "space_breaks_bigram_in_doc",
         query: "京东",
         must_match: &[],
+        must_not_match: &["multi-4"],
+        expect_empty: true,
+        description: "Doc '京 东' (space-separated) has no bigram '京东' — bigram query misses",
+    },
+    QueryTestCase {
+        name: "space_separated_doc_unigram",
+        query: "京 东",
+        must_match: &["multi-4"],
         must_not_match: &[],
         expect_empty: false,
-        description: "[locked] No cross-segment bigram, but unigram catches individual chars",
+        description: "Doc '京 东' matches space-separated query via unigram",
+    },
+    // Same principle for punctuation-separated and multi-word docs.
+    QueryTestCase {
+        name: "cross_segment_bigram_no_match",
+        query: "京东",
+        must_match: &[],
+        must_not_match: &["multi-1", "multi-2", "multi-3"],
+        expect_empty: true,
+        description: "Continuous bigram query does not match docs with separated chars",
+    },
+    // Space-separated query: treated as isolated Han, goes through unigram
+    // route. Matches any doc containing 京 or 东.
+    QueryTestCase {
+        name: "space_separated_han_query",
+        query: "京 东",
+        must_match: &["multi-1", "multi-2", "multi-3"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Space-separated Han chars match via unigram (京 or 东)",
+    },
+    // Full-width space (U+3000) is normalized to regular space by NFKC,
+    // so it also breaks bigram adjacency.
+    QueryTestCase {
+        name: "fullwidth_space_separated_query",
+        query: "京\u{3000}东",
+        must_match: &["multi-1", "multi-2", "multi-3"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Full-width space separator behaves like regular space",
+    },
+    // Zero-width characters (ZWSP, ZWNJ, etc.) are removed by NFKC, so
+    // they do NOT break adjacency — query behaves like "京东".
+    QueryTestCase {
+        name: "zwsp_does_not_break_bigram",
+        query: "京\u{200B}东",
+        must_match: &[],
+        must_not_match: &["multi-1", "multi-2", "multi-3"],
+        expect_empty: true,
+        description: "ZWSP removed by NFKC, query acts as continuous bigram '京东'",
+    },
+    // Mixed bigram + isolated Han: "北京 我" should match docs with "北京"
+    // (via bigram) and docs with "我" (via unigram), independently.
+    QueryTestCase {
+        name: "mixed_bigram_and_isolated",
+        query: "北京 我",
+        must_match: &["zh-1", "zh-2", "zh-6"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Bigram '北京' + isolated unigram '我' both contribute matches",
+    },
+    // Multiple isolated Han: all go through unigram route.
+    QueryTestCase {
+        name: "multiple_isolated_han",
+        query: "京 东 北",
+        must_match: &["multi-1", "multi-2", "multi-3", "zh-7"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "All three chars isolated, matched via unigram individually",
     },
     QueryTestCase {
         name: "each_segment_separate",
@@ -896,44 +1004,84 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Accented query matches both NFC and NFD forms",
     },
     QueryTestCase {
-        name: "french_naive",
+        name: "french_naive_plain",
         query: "naive",
         must_match: &["fr-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "French ï folded to i",
+        description: "Plain query matches accented doc: naïve",
     },
     QueryTestCase {
-        name: "spanish_nino",
+        name: "french_naive_accented",
+        query: "na\u{00EF}ve", // naïve
+        must_match: &["fr-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accented query matches accented doc: both fold to naive",
+    },
+    QueryTestCase {
+        name: "spanish_nino_plain",
         query: "nino",
         must_match: &["es-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Spanish ñ folded to n",
+        description: "Plain query matches accented doc: niño",
     },
     QueryTestCase {
-        name: "german_uber",
+        name: "spanish_nino_accented",
+        query: "ni\u{00F1}o", // niño
+        must_match: &["es-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accented query matches accented doc: both fold to nino",
+    },
+    QueryTestCase {
+        name: "german_uber_plain",
         query: "uber",
         must_match: &["de-2"],
         must_not_match: &[],
         expect_empty: false,
-        description: "German ü folded to u",
+        description: "Plain query matches accented doc: über",
     },
     QueryTestCase {
-        name: "vietnamese_pho",
+        name: "german_uber_accented",
+        query: "\u{00FC}ber", // über
+        must_match: &["de-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accented query matches accented doc: both fold to uber",
+    },
+    QueryTestCase {
+        name: "vietnamese_pho_plain",
         query: "pho",
         must_match: &["vi-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Vietnamese multi-diacritic folded",
+        description: "Plain query matches multi-diacritic doc: phở",
     },
     QueryTestCase {
-        name: "turkish_dotted_i",
+        name: "vietnamese_pho_accented",
+        query: "ph\u{1EDF}", // phở
+        must_match: &["vi-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accented query matches accented doc: both fold to pho",
+    },
+    QueryTestCase {
+        name: "turkish_istanbul_plain",
         query: "istanbul",
         must_match: &["tr-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "İ casefold → i̇, diacritic fold → i, matches istanbul",
+        description: "Plain query matches İstanbul doc (İ → i̇ → i)",
+    },
+    QueryTestCase {
+        name: "turkish_istanbul_accented",
+        query: "\u{0130}stanbul", // İstanbul
+        must_match: &["tr-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "İstanbul query matches İstanbul doc: both fold to istanbul",
     },
     // =========================================================================
     //  P0: Arabic normalization (new)
@@ -963,12 +1111,12 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Alif madda (آ) normalized to plain alif",
     },
     QueryTestCase {
-        name: "arabic_harakat_removal",
+        name: "arabic_harakat_plain_query",
         query: "كتاب",
         must_match: &["ar-7", "ar-8"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Harakat stripped: كِتَابٌ matches كتاب",
+        description: "Plain query matches harakat doc: كِتَابٌ → كتاب",
     },
     QueryTestCase {
         name: "arabic_harakat_in_query",
@@ -976,15 +1124,23 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         must_match: &["ar-7", "ar-8"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Query with harakat also matches plain form",
+        description: "Harakat query matches plain doc: both fold to كتاب",
     },
     QueryTestCase {
-        name: "arabic_tatweel",
+        name: "arabic_tatweel_plain_query",
         query: "الله",
         must_match: &["ar-5", "ar-6"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Tatweel removed: الــــله matches الله",
+        description: "Plain query matches tatweel doc: الــــله → الله",
+    },
+    QueryTestCase {
+        name: "arabic_tatweel_in_query",
+        query: "الــــله",
+        must_match: &["ar-5", "ar-6"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Tatweel query matches both tatweel and plain docs",
     },
     QueryTestCase {
         name: "arabic_ta_marbuta",
@@ -1019,12 +1175,20 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Symmetric: maqsura query matches ya doc",
     },
     QueryTestCase {
-        name: "arabic_indic_digits",
+        name: "arabic_digits_ascii_query",
         query: "2024",
         must_match: &["ar-13", "ar-14"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Arabic-Indic and Persian digits match ASCII 2024",
+        description: "ASCII query matches Arabic-Indic and Persian digit docs",
+    },
+    QueryTestCase {
+        name: "arabic_digits_indic_query",
+        query: "٢٠٢٤",
+        must_match: &["ar-13", "ar-14"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Arabic-Indic digit query matches both digit forms",
     },
     QueryTestCase {
         name: "arabic_reverse_hamza",
@@ -1032,7 +1196,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         must_match: &["ar-1", "ar-2"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Symmetric: hamza query matches no-hamza doc",
+        description: "Hamza query matches both hamza and plain docs",
     },
     // =========================================================================
     //  P3: Known limitations (section 16)

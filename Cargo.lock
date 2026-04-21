@@ -324,15 +324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cjk_search_demo"
-version = "0.1.0"
-dependencies = [
- "tantivy",
- "tantivy-analyzer-icu",
- "tantivy-tokenizer-api",
-]
-
-[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2858,6 +2849,7 @@ dependencies = [
  "rust_icu_sys",
  "rust_icu_ubrk",
  "rust_icu_unorm2",
+ "tantivy",
  "tantivy-tokenizer-api",
  "unicode-normalization",
 ]

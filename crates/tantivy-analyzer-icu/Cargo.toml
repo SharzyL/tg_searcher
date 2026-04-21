@@ -3,14 +3,26 @@ name = "tantivy-analyzer-icu"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+## Enable high-level tantivy integration (ICUSearchConfig, ICUFieldGroup, query routing, snippets).
+tantivy-search = ["dep:tantivy"]
+## Include demo test harness (test documents, query test runner). Implies tantivy-search.
+demo = ["tantivy-search"]
+
 [dependencies]
 rust_icu_common = "5.6"
 rust_icu_sys = "5.6"
 rust_icu_ubrk = "5.6"
 rust_icu_unorm2 = "5.6"
+tantivy = { version = "0.26", optional = true, default-features = false }
 tantivy-tokenizer-api = "0.7"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
 proptest = "1.11.0"
+tantivy = "0.26"
 tantivy-tokenizer-api = "0.7"
+
+[[example]]
+name = "search_demo"
+required-features = ["demo"]

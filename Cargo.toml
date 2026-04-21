@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tantivy-analyzer-icu", "crates/cjk_search_demo"]
+members = [".", "crates/tantivy-analyzer-icu"]
 
 [package]
 name = "tg-searcher"
@@ -25,7 +25,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
 shell-words = "1.1.1"
 tantivy = { version = "0.26", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
-tantivy-analyzer-icu = { path = "crates/tantivy-analyzer-icu" }
+tantivy-analyzer-icu = { path = "crates/tantivy-analyzer-icu", features = ["tantivy-search"] }
 thiserror = "2.0.17"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
 tokio-socks = "0.5.2"
