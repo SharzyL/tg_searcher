@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/tantivy-analyzer-icu", "crates/cjk_search_demo"]
+
 [package]
 name = "tg-searcher"
 version = "0.1.0"
@@ -21,7 +24,8 @@ rpassword = "7.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
 shell-words = "1.1.1"
-tantivy = { version = "0.25.0", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
+tantivy = { version = "0.26", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
+tantivy-analyzer-icu = { path = "crates/tantivy-analyzer-icu" }
 thiserror = "2.0.17"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
 tokio-socks = "0.5.2"

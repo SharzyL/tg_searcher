@@ -11,7 +11,16 @@
   outputs = { flake-parts, ... }@inputs:
     let
       name = "tg-searcher";
-      makePkg = { lib, rustPlatform, rustc, cargo, runCommand }:
+      makePkg =
+        { lib
+        , rustPlatform
+        , rustc
+        , cargo
+        , icu
+        , pkg-config
+        , llvmPackages
+        , runCommand
+        }:
         rustPlatform.buildRustPackage {
           inherit name;
           src = with lib.fileset; toSource {
@@ -28,6 +37,15 @@
             ln -s ${cargo}/bin/cargo $out/bin/
             ln -s ${rustPlatform.rustLibSrc} $out/src
           '';
+
+          nativeBuildInputs = [
+            pkg-config
+            rustPlatform.bindgenHook
+          ];
+
+          buildInputs = [
+            icu
+          ];
 
           cargoHash = "sha256-3dShJ1fU+uZOMjrd34vZYGRmJLOcF5ppKPBPRfdWd70=";
           meta.mainProgram = name;

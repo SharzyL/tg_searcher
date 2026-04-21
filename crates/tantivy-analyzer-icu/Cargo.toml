@@ -1,0 +1,15 @@
+[package]
+name = "tantivy-analyzer-icu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rust_icu_common = "5.6"
+rust_icu_sys = "5.6"
+rust_icu_ubrk = "5.6"
+rust_icu_unorm2 = "5.6"
+tantivy-tokenizer-api = "0.7"
+
+[dev-dependencies]
+proptest = "1.11.0"
+tantivy-tokenizer-api = "0.7"

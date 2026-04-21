@@ -269,8 +269,8 @@ impl Indexer {
         let url_term = Term::from_field_text(self.fields.url, url);
         let url_query = TermQuery::new(url_term.clone(), IndexRecordOption::Basic);
 
-        let top_docs = searcher
-            .search(&url_query, &TopDocs::with_limit(1))
+        let top_docs: Vec<(f32, tantivy::DocAddress)> = searcher
+            .search(&url_query, &TopDocs::with_limit(1).order_by_score())
             .map_err(|e| Error::Index(e.to_string()))?;
 
         if let Some((_, doc_address)) = top_docs.first() {

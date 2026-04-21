@@ -1,0 +1,13 @@
+[package]
+name = "cjk_search_demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tantivy = "0.26"
+tantivy-analyzer-icu = { path = "../tantivy-analyzer-icu" }
+tantivy-tokenizer-api = "0.7"
+
+[[bin]]
+name = "search_demo"
+path = "src/bin/search_demo.rs"
