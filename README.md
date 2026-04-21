@@ -1,5 +1,8 @@
 # TG Searcher
 
+> [!IMPORTANT]
+> This project is being [written in Rust](https://github.com/SharzyL/tg_searcher/tree/riir) with a fully written analyzer for better multi-lingual support based on Tantivy. The Python version is not actively maintained.
+
 众所周知，Telegram 的搜索功能较弱，尤其是对于中文等 CJK 语言，由于 Telegram 无法对其进行正确的分词，因此很难搜到想要的内容。本项目实现了一个通用的框架，用户可以对 Telegram 的会话建立索引，通过 bot 来便捷地搜索消息。
 
 它的使用效果见下图：
