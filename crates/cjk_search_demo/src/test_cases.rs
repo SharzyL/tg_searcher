@@ -70,6 +70,26 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("ext-1", "㐀是一个字"),
     ("ext-2", "𠀀是另一个字"),
     ("ext-3", "𠀀𠁀"),
+    // === Latin accent folding ===
+    ("fr-1", "na\u{00EF}ve"), // naïve
+    ("es-1", "ni\u{00F1}o"),  // niño
+    ("de-2", "\u{00FC}ber"),  // über
+    ("vi-1", "ph\u{1EDF}"),   // phở
+    // === Arabic ===
+    ("ar-1", "احمد"),     // Ahmed, no hamza
+    ("ar-2", "أحمد"),     // Ahmed, hamza above
+    ("ar-3", "إبراهيم"),  // Ibrahim, hamza below
+    ("ar-4", "آمين"),     // Amin, madda
+    ("ar-5", "الله"),     // Allah
+    ("ar-6", "الــــله"), // Allah with tatweel
+    ("ar-7", "كتاب"),     // book, no harakat
+    ("ar-8", "كِتَابٌ"),     // book, with harakat
+    ("ar-9", "مدرسة"),    // school, ta marbuta
+    ("ar-10", "مدرسه"),   // school, ha
+    ("ar-11", "فى"),      // "in" with alif maqsura
+    ("ar-12", "في"),      // "in" with standard ya
+    ("ar-13", "٢٠٢٤"),    // Arabic-Indic 2024
+    ("ar-14", "۲۰۲۴"),    // Persian 2024
     // === Long document ===
     ("long-1", LONG_DOCUMENT_TEXT),
 ];
@@ -693,12 +713,20 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Uppercase + sharp s combination",
     },
     QueryTestCase {
-        name: "greek_case_fold",
+        name: "greek_no_accent",
+        query: "ξενος",
+        must_match: &["gr-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Greek without accent matches accented doc (diacritic folding)",
+    },
+    QueryTestCase {
+        name: "greek_with_accent",
         query: "ξένος",
         must_match: &["gr-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Greek lowercase with accent matches uppercase original",
+        description: "Greek with accent also matches",
     },
     QueryTestCase {
         name: "greek_final_sigma",
@@ -833,12 +861,178 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "北京是 bigrams (北京,京是) both in zh-2",
     },
     QueryTestCase {
+        name: "no_suffix_match_en",
+        query: "ello",
+        must_match: &[],
+        must_not_match: &["en-1", "mix-3"],
+        expect_empty: false,
+        description: "'ello' is not 'hello' — no suffix match",
+    },
+    QueryTestCase {
         name: "no_substring_match_en",
         query: "lear",
         must_match: &[],
         must_not_match: &["en-3"],
         expect_empty: false,
         description: "'lear' is not 'learning' — no substring match",
+    },
+    // =========================================================================
+    //  P0: Accent/diacritic folding (new)
+    // =========================================================================
+    QueryTestCase {
+        name: "latin_no_accent_cafe",
+        query: "cafe",
+        must_match: &["norm-8", "norm-9"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accentless query matches accented docs",
+    },
+    QueryTestCase {
+        name: "latin_accent_cafe",
+        query: "caf\u{00E9}",
+        must_match: &["norm-8", "norm-9"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Accented query matches both NFC and NFD forms",
+    },
+    QueryTestCase {
+        name: "french_naive",
+        query: "naive",
+        must_match: &["fr-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "French ï folded to i",
+    },
+    QueryTestCase {
+        name: "spanish_nino",
+        query: "nino",
+        must_match: &["es-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Spanish ñ folded to n",
+    },
+    QueryTestCase {
+        name: "german_uber",
+        query: "uber",
+        must_match: &["de-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "German ü folded to u",
+    },
+    QueryTestCase {
+        name: "vietnamese_pho",
+        query: "pho",
+        must_match: &["vi-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Vietnamese multi-diacritic folded",
+    },
+    QueryTestCase {
+        name: "turkish_dotted_i",
+        query: "istanbul",
+        must_match: &["tr-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "İ casefold → i̇, diacritic fold → i, matches istanbul",
+    },
+    // =========================================================================
+    //  P0: Arabic normalization (new)
+    // =========================================================================
+    QueryTestCase {
+        name: "arabic_alif_hamza_above",
+        query: "احمد",
+        must_match: &["ar-1", "ar-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Alif hamza above (أ) normalized to plain alif",
+    },
+    QueryTestCase {
+        name: "arabic_alif_hamza_below",
+        query: "ابراهيم",
+        must_match: &["ar-3"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Alif hamza below (إ) normalized to plain alif",
+    },
+    QueryTestCase {
+        name: "arabic_alif_madda",
+        query: "امين",
+        must_match: &["ar-4"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Alif madda (آ) normalized to plain alif",
+    },
+    QueryTestCase {
+        name: "arabic_harakat_removal",
+        query: "كتاب",
+        must_match: &["ar-7", "ar-8"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Harakat stripped: كِتَابٌ matches كتاب",
+    },
+    QueryTestCase {
+        name: "arabic_harakat_in_query",
+        query: "كِتَابٌ",
+        must_match: &["ar-7", "ar-8"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Query with harakat also matches plain form",
+    },
+    QueryTestCase {
+        name: "arabic_tatweel",
+        query: "الله",
+        must_match: &["ar-5", "ar-6"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Tatweel removed: الــــله matches الله",
+    },
+    QueryTestCase {
+        name: "arabic_ta_marbuta",
+        query: "مدرسه",
+        must_match: &["ar-9", "ar-10"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Ta marbuta (ة) and ha (ه) unified",
+    },
+    QueryTestCase {
+        name: "arabic_ta_marbuta_reverse",
+        query: "مدرسة",
+        must_match: &["ar-9", "ar-10"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Symmetric: ta marbuta query also matches ha doc",
+    },
+    QueryTestCase {
+        name: "arabic_ya_maqsura",
+        query: "في",
+        must_match: &["ar-11", "ar-12"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Ya maqsura (ى) and ya (ي) unified",
+    },
+    QueryTestCase {
+        name: "arabic_ya_maqsura_reverse",
+        query: "فى",
+        must_match: &["ar-11", "ar-12"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Symmetric: maqsura query matches ya doc",
+    },
+    QueryTestCase {
+        name: "arabic_indic_digits",
+        query: "2024",
+        must_match: &["ar-13", "ar-14"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Arabic-Indic and Persian digits match ASCII 2024",
+    },
+    QueryTestCase {
+        name: "arabic_reverse_hamza",
+        query: "أحمد",
+        must_match: &["ar-1", "ar-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Symmetric: hamza query matches no-hamza doc",
     },
     // =========================================================================
     //  P3: Known limitations (section 16)

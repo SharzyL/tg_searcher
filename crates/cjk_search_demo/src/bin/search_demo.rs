@@ -10,15 +10,21 @@ use cjk_search_demo::runner::{
 };
 use cjk_search_demo::schema::{SchemaFields, build_schema};
 use cjk_search_demo::test_cases::TEST_DOCUMENTS;
-use tantivy_analyzer_icu::NormalizingICUTokenizer;
+use tantivy_analyzer_icu::{
+    ArabicNormalizationFilter, DiacriticFoldingFilter, NormalizingICUTokenizer,
+};
 
 fn register_analyzers(index: &Index) {
     let bigram = TextAnalyzer::builder(NormalizingICUTokenizer)
+        .filter(DiacriticFoldingFilter)
+        .filter(ArabicNormalizationFilter)
         .filter(CJKBigramFilter)
         .build();
     index.tokenizers().register("cjk_bigram", bigram);
 
     let unigram = TextAnalyzer::builder(NormalizingICUTokenizer)
+        .filter(DiacriticFoldingFilter)
+        .filter(ArabicNormalizationFilter)
         .filter(HanOnlyFilter)
         .build();
     index.tokenizers().register("cjk_unigram", unigram);
