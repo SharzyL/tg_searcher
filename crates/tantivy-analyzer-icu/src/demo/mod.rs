@@ -30,8 +30,9 @@ pub fn index_documents(writer: &IndexWriter, fields: &DemoFields) -> tantivy::Re
         writer.add_document(doc!(
             fields.id => *id,
             fields.icu.stored => *body,
-            fields.icu.bigram => *body,
+            fields.icu.folded_bigram => *body,
             fields.icu.unigram => *body,
+            fields.icu.diacritic => *body,
         ))?;
     }
     Ok(())

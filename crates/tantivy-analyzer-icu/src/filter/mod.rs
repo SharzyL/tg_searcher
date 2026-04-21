@@ -8,15 +8,18 @@
 //!
 //! Applied in this recommended order:
 //!
-//! 1. [`DiacriticFoldingFilter`] — NFD decompose, strip combining marks (CCC≠0),
-//!    NFC recompose. Removes accents, harakat, and other diacritical marks.
-//! 2. [`ArabicNormalizationFilter`] — Arabic-specific character normalization
-//!    (alif variants, ta marbuta, tatweel removal, digit mapping).
+//! 1. [`SemiticNormalizationFilter`] — Arabic character normalization (alif variants,
+//!    ta marbuta, tatweel removal, digit mapping) + harakat/niqqud stripping.
+//! 2. [`DiacriticFoldingFilter`] — NFD decompose, strip foldable diacritics
+//!    (U+0300–036F, U+1AB0–1AFF, U+1DC0–1DFF), NFC recompose. Preserves
+//!    Japanese dakuten, Devanagari virama, and other structural marks.
 //! 3. One of:
 //!    - [`CJKBigramFilter`] — overlapping bigrams for CJK, with offset-based
-//!      adjacency detection. Used for the bigram index field.
+//!      adjacency detection. Used for the folded_bigram index field.
 //!    - [`HanOnlyFilter`] — keeps only single Han characters. Used for the
 //!      unigram index field.
+//!    - [`DiacriticOnlyFilter`] — keeps only tokens with foldable diacritics in
+//!      their original (pre-fold) form. Used for the diacritic index field.
 //!
 //! ## Script Classification
 //!
@@ -31,17 +34,20 @@
 //! [`ICUSearchConfig::route_query`](crate::search::ICUSearchConfig::route_query)
 //! to decide which characters need unigram fallback.
 
-mod arabic_normalization;
 mod bigram;
 mod diacritic_folding;
+mod diacritic_only;
 mod han_only;
+mod semitic_normalization;
 
-pub use arabic_normalization::ArabicNormalizationFilter;
 pub use bigram::CJKBigramFilter;
 pub use diacritic_folding::DiacriticFoldingFilter;
+pub use diacritic_only::DiacriticOnlyFilter;
 pub use han_only::HanOnlyFilter;
+pub use semitic_normalization::SemiticNormalizationFilter;
 
 use tantivy_tokenizer_api::Token;
+use unicode_normalization::UnicodeNormalization;
 
 /// Returns true if `c` is a Han (Chinese) character.
 ///
@@ -141,6 +147,29 @@ pub fn token_script_group(text: &str) -> ScriptGroup {
     text.chars()
         .next()
         .map_or(ScriptGroup::NonCjk, script_group)
+}
+
+/// Returns true if `ch` is a combining mark in the "foldable diacritic" ranges.
+///
+/// These ranges cover Latin, Greek, Cyrillic, Vietnamese, and IPA accents.
+/// They deliberately exclude structurally significant marks:
+/// Japanese dakuten (U+3099/309A), Devanagari virama (U+094D),
+/// Arabic harakat (U+064B–0652), Hebrew niqqud (U+0591–05C7).
+pub fn is_foldable_diacritic(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        // Combining Diacritical Marks
+        0x0300..=0x036F
+        // Combining Diacritical Marks Extended
+        | 0x1AB0..=0x1AFF
+        // Combining Diacritical Marks Supplement
+        | 0x1DC0..=0x1DFF
+    )
+}
+
+/// Returns true if the NFD decomposition of `text` contains any foldable diacritic.
+pub fn has_foldable_diacritic(text: &str) -> bool {
+    text.nfd().any(is_foldable_diacritic)
 }
 
 /// Finds isolated Han characters in a token sequence produced by the base

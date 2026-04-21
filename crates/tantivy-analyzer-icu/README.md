@@ -1,17 +1,17 @@
 # tantivy-analyzer-icu
 
 ICU-based text analysis for [tantivy](https://github.com/quickwit-oss/tantivy),
-with multilingual support for CJK bigram search, diacritic folding, and Arabic
-normalization. All token offsets map back to the original (pre-normalization)
-text for correct snippet highlighting.
+with multilingual support for CJK bigram search, smartcase diacritic handling,
+and Semitic script normalization. All token offsets map back to the original
+(pre-normalization) text for correct snippet highlighting.
 
 ## Feature Flags
 
 | Feature | Description |
 |---------|-------------|
 | *(none)* | Core tokenizer and filters only. No tantivy index dependency. |
-| `tantivy-search` | High-level tantivy integration: `ICUSearchConfig`, dual-field schema, query routing, snippet generation. |
-| `demo` | Test harness with 128 query test cases. Implies `tantivy-search`. |
+| `tantivy-search` | High-level tantivy integration: `ICUSearchConfig`, three-field schema, smartcase query routing, snippet generation. |
+| `demo` | Test harness with query test cases. Implies `tantivy-search`. |
 
 ## Quick Start
 
@@ -23,57 +23,53 @@ that implement `tantivy-tokenizer-api` traits:
 ```rust
 use tantivy::tokenizer::TextAnalyzer;
 use tantivy_analyzer_icu::{
-    NormalizingICUTokenizer, DiacriticFoldingFilter,
-    ArabicNormalizationFilter, CJKBigramFilter,
+    NormalizingICUTokenizer, SemiticNormalizationFilter,
+    DiacriticFoldingFilter, CJKBigramFilter,
 };
 
 let analyzer = TextAnalyzer::builder(NormalizingICUTokenizer)
+    .filter(SemiticNormalizationFilter)
     .filter(DiacriticFoldingFilter)
-    .filter(ArabicNormalizationFilter)
     .filter(CJKBigramFilter)
     .build();
 ```
 
 ### With tantivy integration (`tantivy-search` feature)
 
-The `search` module provides `ICUSearchConfig` which handles the dual-field
-schema, analyzer registration, query routing, and snippet generation:
+The `search` module provides `ICUSearchConfig` which handles the three-field
+schema, analyzer registration, smartcase query routing, and snippet generation:
 
-```rust
+```ignore
 use tantivy::schema::Schema;
 use tantivy_analyzer_icu::search::ICUSearchConfig;
 
 let config = ICUSearchConfig::default();
 
-// 1. Schema: add a field group (creates stored + bigram + unigram fields)
+// 1. Schema: add a field group (creates stored + folded_bigram + unigram + diacritic fields)
 let mut builder = Schema::builder();
 let content = config.add_field_group(&mut builder, "content");
-// Add your own fields freely:
-// let chat_id = builder.add_i64_field("chat_id", INDEXED | STORED);
 let schema = builder.build();
 
 // 2. Register analyzers on the index
 let index = tantivy::Index::create_in_ram(schema);
 config.register_analyzers(&index);
 
-// 3. Index documents (all three fields get the same text)
-// writer.add_document(doc!(
-//     content.stored => text,
-//     content.bigram => text,
-//     content.unigram => text,
-// ))?;
+// 3. Index documents (all four fields get the same text)
+writer.add_document(doc!(
+    content.stored => text,
+    content.folded_bigram => text,
+    content.unigram => text,
+    content.diacritic => text,
+))?;
 
-// 4. Query routing (bigram for adjacent CJK, unigram for isolated Han)
-// let query = config.route_query(&index, &content, "北京 我")?;
+// 4. Query routing (smartcase: café→diacritic, cafe→folded_bigram, 北京→bigram)
+let query = config.route_query(&index, &content, "café 北京 我")?;
 
-// 5. Snippet generation with dual-field highlight merging
-// let snippet = config.snippet(&searcher, &query, &content, &body);
+// 5. Snippet generation with three-field highlight merging
+let snippet = config.snippet(&searcher, &query, &content, &body);
 ```
 
 ## Running the Demo
-
-The crate includes a demo with 128 query test cases covering CJK bigrams, diacritic
-folding, Arabic normalization, NFKC compatibility, and various edge cases.
 
 ```bash
 # Run all automated tests (requires ICU libraries)
@@ -104,85 +100,158 @@ NormalizingICUTokenizer
        individual characters)
   │
   ▼
-DiacriticFoldingFilter
-  NFD → strip combining marks (CCC≠0) → NFC
-  café→cafe, naïve→naive, über→uber, phở→pho
-  Arabic harakat: كِتَابٌ→كتاب
-  │
-  ▼
-ArabicNormalizationFilter
-  Alif variants→Alif, Ta marbuta→Ha, Alif maqsura→Ya,
-  Farsi variants→Arabic, tatweel/hamza removal,
+SemiticNormalizationFilter
+  Arabic: harakat stripping, alif variants→alif, ta marbuta→ha,
+  alif maqsura→ya, Farsi variants→Arabic, tatweel/hamza removal,
   Arabic-Indic/Persian digits→ASCII
+  Hebrew: niqqud (vowel points, cantillation) stripping
   │
-  ▼
-CJKBigramFilter (bigram field)  OR  HanOnlyFilter (unigram field)
+  ├──────────────────────────────┬────────────────────────┐
+  ▼                              ▼                        ▼
+DiacriticFoldingFilter       DiacriticOnlyFilter       HanOnlyFilter
+  NFD → strip foldable Mn     (keep only tokens         (keep only single
+  → NFC                        with foldable Mn,         Han characters)
+  café→cafe, über→uber          in original form)            │
+  で stays で (not foldable)        │                        ▼
+  क्ष stays क्ष (not foldable)       ▼                    unigram field
+        │                     diacritic field
+        ▼
+CJKBigramFilter
+        │
+        ▼
+  folded_bigram field
 ```
+
+"Foldable" means combining marks in U+0300–036F, U+1AB0–1AFF, U+1DC0–1DFF
+(Latin/Greek/Cyrillic/Vietnamese/IPA accents). Excluded: Japanese dakuten
+(U+3099/309A), Devanagari virama (U+094D), Arabic harakat, Hebrew niqqud.
 
 ### Worked Example
 
-Input: `㋿Ξ㍾㍿の葛󠄀飾区でCafé 東京タワー فى مدرسة 北京 在 东京`
+Input: `㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで挨拶した。8月10日、二 人 幸 终。`
+
+(`\u{E0100}` is an ideographic variation selector, invisible in rendered text)
 
 ```text
-Tokenizer:   [令] [和] [ξ] [明] [治] [株] [式] [会] [社] [の] [葛] [飾] [区] [で] [café] [東] [京] [タ] [ワ] [ー] [فى] [مدرسة] [北] [京] [在] [东] [京]
-+ Diacritic: [令] [和] [ξ] [明] [治] [株] [式] [会] [社] [の] [葛] [飾] [区] [て] [cafe] [東] [京] [タ] [ワ] [ー] [فى] [مدرسة] [北] [京] [在] [东] [京]
-+ Arabic:    ...same except [فى]→[في] [مدرسة]→[مدرسه]
-→ Bigram:    [令和] [ξ] [明治] [治株] [株式] [式会] [会社] [社の] [の葛] [葛飾] [飾区] [区て] [cafe] [東京] [京タ] [タワ] [ワー] [في] [مدرسه] [北京] [东京]
-→ Unigram:   [令] [和] [明] [治] [株] [式] [会] [社] [葛] [飾] [区] [東] [京] [北] [京] [在] [东] [京]
+Step 1 — NFKC Casefold:
+  ㋿→令和  Ξ→ξ  ㍾→明治  ㍿→株式会社          compatibility decomposition
+  沢\u{E0100} → 沢                              IVS absorbed into 沢
+  T→t N→n (Thé→thé, Noir→noir)                   casefold
+
+Step 2 — ICU word segmentation (UAX #29):
+  CJK/kana sequences and Latin words are split into separate segments.
+  Punctuation (、。) removed. Spaces are separators, not tokens.
+
+Step 3 — CJK unigram expansion:
+  Each Han/Kana character in a segment becomes its own token.
+  Non-CJK tokens (naïve, thé, noir, phở, שָׁלוֹם, नमस्ते, كَبَاب) stay intact.
+  Numbers (8, 10) are separate non-CJK tokens.
+
+  [令] [和] [ξ] [明] [治] [株] [式] [会] [社] [の] [下] [北] [沢] [店] [で]
+  [naïve] [な] [thé] [noir] [と] [phở] [と] [كَبَاب] [を] [注] [文]
+  [שָׁלוֹם] [と] [नमस्ते] [で] [挨] [拶] [し] [た]
+  [8] [月] [10] [日] [二] [人] [幸] [终]
+                      ↑、↑ ↑空↑ ↑空↑ ↑空↑
+
+Step 4 — SemiticNormalizationFilter:
+  [كَبَاب]→[كباب]  harakat stripped
+  [שָׁלוֹם]→[שלום]  niqqud stripped
+  [नमस्ते] unchanged — virama (U+094D) is NOT stripped
+  (other tokens unchanged)
+
+Step 5 — DiacriticFoldingFilter (folded_bigram / unigram paths only):
+  [naïve]→[naive]  [thé]→[the]  [phở]→[pho]
+  [noir] unchanged — no foldable diacritics
+  [で] stays [で]    dakuten (U+3099) is NOT foldable
+  [नमस्ते] stays [नमस्ते]  virama (U+094D) is NOT foldable
+  (other tokens unchanged)
+
+Step 6 — terminal filters (three parallel paths):
+
+→ folded_bigram (CJKBigramFilter):
+  [令和] [ξ] [明治] [治株] [株式] [式会] [会社] [社の] [の下] [下北] [北沢] [沢店] [店で]
+  [naive] [な] [the] [noir] [と] [pho] [と] [كباب] [を注] [注文]
+  [שלום] [と] [नमस्ते] [で挨] [挨拶] [拶し] [した]
+  [8] [10]
+  (月, 日 dropped — isolated Han between numbers;
+   二, 人, 幸, 终 dropped — isolated Han separated by spaces)
+
+→ unigram (HanOnlyFilter):
+  [令] [和] [明] [治] [株] [式] [会] [社] [下] [北] [沢] [店]
+  [注] [文] [挨] [拶] [月] [日] [二] [人] [幸] [终]
+
+→ diacritic (DiacriticOnlyFilter, pre-fold form):
+  [naïve] [thé] [phở]
 ```
 
 Things to note:
 - **㋿Ξ㍾㍿**: NFKC expands compatibility chars (㋿→令和, ㍾→明治, ㍿→株式会社).
   Cross-expansion bigrams form naturally (治株) because original-text offsets are contiguous.
-- **葛󠄀飾区**: IVS (U+E0100) is removed by NFKC. The offset is absorbed into 葛's range,
-  so 葛飾 still forms a bigram.
-- **Café→cafe**: Diacritic folding strips the accent. NFKC casefold handles uppercasing (C→c).
-- **فى→في**: Arabic normalization maps alif maqsura (ى) to standard ya (ي).
-  **مدرسة→مدرسه**: Ta marbuta (ة) normalized to ha (ه). Both are single-token non-CJK
-  words, so they pass through the bigram filter unchanged.
-- **北京 在 东京**: Space breaks offset adjacency. Bigram field gets \[北京\] and \[东京\] separately
-  — no bigram "京 在" or "在 东". Unigram field keeps all five individual characters.
-- **で→て**: Known issue — diacritic folding strips dakuten (combining mark U+3099, CCC=8)
-  from kana. で (te + dakuten) becomes て. See Limitations.
+- **下北沢\u{E0100}店**: IVS (U+E0100) is removed by NFKC. The offset is absorbed into 沢's
+  range, so 北沢 still forms a bigram.
+- **naïve, thé, phở**: Diacritics folded in folded\_bigram (naive, the, pho);
+  preserved in diacritic field for smartcase exact matching.
+  **noir** has no foldable diacritics — passes through unchanged, absent from diacritic field.
+- **で stays で**: Dakuten (U+3099) is NOT in the foldable range, so it is preserved.
+- **नमस्ते stays नमस्ते**: Devanagari virama (U+094D) is NOT foldable. The conjunct
+  स्त (sa + virama + ta) is preserved intact.
+- **שָׁלוֹם→שלום**: Hebrew niqqud stripped by SemiticNormalizationFilter.
+- **كَبَاب→كباب**: Arabic harakat (fatha) stripped by SemiticNormalizationFilter.
+- **8月10日**: Numbers `8` and `10` are non-CJK tokens. 月 and 日 are Han chars
+  isolated between them — dropped from folded\_bigram, kept in unigram.
+- **、二 人 幸 终。**: Punctuation (、。) is stripped. Spaces between 二, 人, 幸, 终
+  break offset adjacency — no bigrams form. These isolated Han chars are dropped
+  from folded\_bigram (covered by unigram field). Compare with 注文 where the two
+  chars are adjacent and produce bigram \[注文\].
 
-### Dual-Field Indexing
+### Three-Field Indexing
 
-Each text source is indexed into two fields to handle CJK search correctly:
+Each text source is indexed into three fields:
 
-- **Bigram field**: CJK characters produce overlapping bigrams (北京→"北京",
-  京天→"京天"). Isolated Han characters are dropped (covered by unigram).
-  Non-CJK tokens pass through unchanged.
+- **folded_bigram**: Primary recall field. Diacritics folded, CJK characters produce
+  overlapping bigrams (北京→"北京", 京天→"京天"). Isolated Han characters are dropped
+  (covered by unigram). Non-CJK tokens pass through in folded form.
 
-- **Unigram field**: Only single Han characters are kept. Covers single-character
+- **unigram**: Only single Han characters are kept. Covers single-character
   queries that the bigram field misses.
 
-### Query Routing
+- **diacritic**: Sparse precision field. Only tokens whose NFD form contains a
+  foldable diacritic mark are kept, in their original (pre-fold) form. CJK, Arabic,
+  Hebrew, and unaccented tokens produce nothing here.
 
-`ICUSearchConfig::route_query` analyzes the query to decide routing:
+### Query Routing (Smartcase)
 
-| Query | Route | Rationale |
-|-------|-------|-----------|
-| `北京` | Bigram only | Adjacent CJK → bigram covers it |
-| `京 东` | Unigram only | Space-separated → each char isolated |
-| `北京 我` | Bigram `北京` + Unigram `我` | Mixed: "北京" is adjacent, "我" is isolated |
-| `hello` | Bigram only | Non-CJK passthrough |
-| `京` | Unigram only | Single Han char |
+`ICUSearchConfig::route_query` analyzes the query to decide routing.
+The "Matches?" column shows results against the worked example above as the
+sole indexed document.
 
-Adjacency is determined by **original-text byte offsets**: if two CJK tokens
-have contiguous or overlapping offsets (`curr.offset_from <= prev.offset_to`),
-they are adjacent. This correctly handles:
-- Spaces and punctuation as separators
-- Zero-width characters (ZWSP, ZWNJ, etc.) removed by NFKC — do NOT break adjacency
-- Variation selectors absorbed into preceding character's offset
-- NFKC multi-char expansions sharing the same offset (e.g. ㍿→株式会社)
+| Query | Route | Matches? | Rationale |
+|-------|-------|:-:|-----------|
+| `下北沢` | folded_bigram | yes | Adjacent CJK → bigrams 下北, 北沢 |
+| `二人` | folded_bigram | **no** | Bigram 二人 not in index (二 and 人 are space-separated in doc) |
+| `二 人` | unigram | yes | Space in query → each char isolated → unigram lookup |
+| `注文 幸` | folded_bigram + unigram | yes | 注文 adjacent → bigram; 幸 isolated → unigram |
+| `noir` | folded_bigram | yes | Non-CJK, no diacritics → folded_bigram passthrough |
+| `nöir` | folded_bigram + diacritic | yes | nöir folds to noir in folded_bigram (match); diacritic field has no nöir (no boost) |
+| `the` | folded_bigram | yes | No diacritics → broad match (matches both thé and the) |
+| `thé` | folded_bigram + diacritic | yes | Diacritic field boosts exact accent match |
+| `pho` | folded_bigram | yes | phở folded to pho in folded_bigram |
+| `phở` | folded_bigram + diacritic | yes | Diacritic field boosts exact match for phở |
+| `naïve 下北沢` | folded_bigram + diacritic | yes | Per-token: naïve→diacritic, 下北沢→folded_bigram |
+| `月` | unigram | yes | Single Han char → unigram only |
+| `8月` | folded_bigram + unigram | yes | 8 is non-CJK, 月 is Han → no bigram; 月 falls back to unigram |
+
+The smartcase decision: if `raw_query.nfd()` contains any foldable diacritic mark,
+the diacritic field is also queried (boosted 3x vs folded_bigram's 2x). Tokens
+without diacritics in a diacritic-bearing query still go to folded_bigram.
 
 ### Snippet Generation
 
 `ICUSearchConfig::snippet` generates snippets with:
-- **Dual-field fallback**: tries bigram highlights first, falls back to unigram.
-- **Highlight merging**: when bigram is primary, also scans with unigram to
-  highlight isolated Han chars (e.g. query "北京 我" highlights both "北京"
-  and "我" in the same snippet).
+- **Three-field fallback**: tries folded_bigram highlights first, falls back to
+  unigram, then diacritic.
+- **Highlight merging**: when folded_bigram is primary, also scans with unigram
+  and diacritic to merge additional highlights.
 - **Truncation workaround**: tantivy's `SnippetGenerator` sets the fragment
   boundary at the last token's `offset_to`. If the analyzer drops trailing
   tokens (e.g. HanOnlyFilter), the fragment is truncated. For short bodies
@@ -190,33 +259,26 @@ they are adjacent. This correctly handles:
 
 ## Limitations
 
-### Japanese dakuten/handakuten stripped by diacritic folding
-
-`DiacriticFoldingFilter` strips all combining marks with CCC ≠ 0. Japanese
-dakuten (U+3099, CCC=8) and handakuten (U+309A, CCC=8) are combining marks,
-so they are removed: で→て, ガ→カ. This means a search for "で" will match
-documents containing "て" and vice versa, losing the voicing distinction.
-
-Note: this only affects text where dakuten appears as a **separate combining
-character**. Precomposed kana (e.g. U+3067 で as a single codepoint) is not
-affected — NFKC Casefold normalizes to the precomposed form, which has CCC=0.
-The issue arises when the input is in NFD form or when NFKC Casefold
-decomposes certain compatibility forms.
-
-### South Asian scripts (Devanagari, Bengali, Tamil, etc.)
-
-`DiacriticFoldingFilter` strips all combining marks with canonical combining
-class ≠ 0. This includes **virama** (U+094D in Devanagari, CCC=9), which is
-structural — it joins consonants into clusters (क + virama + ष = क्ष "ksha").
-Stripping it corrupts the text. If South Asian script support is needed,
-the diacritic folding logic should be made script-aware.
-
 ### Single kana/hangul recall
 
 A query for a single kana character (e.g. "は") returns no results: the bigram
 field bigramizes it with neighbors (no standalone "は" token), and the unigram
-field only keeps Han characters. This is a known trade-off of the dual-field
+field only keeps Han characters. This is a known trade-off of the three-field
 design.
+
+### Cannot express "match `cafe` but not `café`"
+
+Queries without diacritics always route to folded_bigram, which unifies accented
+and unaccented forms. There is no facility for "match the unaccented form exactly,
+excluding accented variants."
+
+### Smartcase diacritic matching is asymmetric by design
+
+Typing without diacritics gives broad matching: `cafe` matches both `cafe` and
+`café`, `uber` matches `über`, `pho` matches `phở`/`phố`/`phồ`/etc. Typing with
+diacritics gives exact matching: `café` matches only `café`, `über` matches only
+`über`. There is no middle ground (e.g. "prefer `café` but also include `cafe`
+as fallback").
 
 ### tantivy snippet fragment truncation
 

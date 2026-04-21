@@ -1,21 +1,30 @@
 //! Diacritic folding token filter.
 //!
-//! Removes all combining marks (accents, diacritics, harakat, etc.) from token
-//! text via NFD decomposition → filter CCC≠0 → NFC recomposition. Offsets are
-//! preserved unchanged since this operates on the token text only.
+//! Strips foldable diacritics (Latin/Greek/Cyrillic/Vietnamese/IPA accents)
+//! from token text via NFD decomposition → filter foldable marks → NFC
+//! recomposition. Structurally significant marks (Japanese dakuten, Devanagari
+//! virama, Arabic harakat, Hebrew niqqud) are preserved — Arabic/Hebrew marks
+//! are handled by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter).
 
 use tantivy_tokenizer_api::{Token, TokenFilter, TokenStream, Tokenizer};
 use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::canonical_combining_class;
 
-/// Token filter that strips all diacritical marks from token text.
+use super::is_foldable_diacritic;
+
+/// Token filter that strips foldable diacritical marks from token text.
 ///
 /// After NFKC Casefold normalization, precomposed characters like `é` (U+00E9)
-/// still contain accents. This filter decomposes them via NFD, strips all
-/// combining marks (canonical combining class ≠ 0), then recomposes via NFC.
+/// still contain accents. This filter decomposes them via NFD, strips only
+/// combining marks in the foldable ranges (U+0300–036F, U+1AB0–1AFF,
+/// U+1DC0–1DFF), then recomposes via NFC.
 ///
-/// Examples: `café → cafe`, `naïve → naive`, `München → munchen` (after casefold),
-/// Arabic harakat like `كِتَابٌ → كتاب`.
+/// Examples: `café → cafe`, `naïve → naive`, `München → munchen` (after casefold).
+///
+/// Preserved (not foldable):
+/// - Japanese dakuten `で` stays `で` (U+3099 not in foldable range)
+/// - Devanagari virama `क्ष` stays `क्ष` (U+094D not in foldable range)
+/// - Arabic harakat (stripped by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter))
+/// - Hebrew niqqud (stripped by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter))
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DiacriticFoldingFilter;
 
@@ -65,20 +74,20 @@ impl<S: TokenStream> TokenStream for DiacriticFoldingTokenStream<S> {
     }
 }
 
-/// Fold diacritics in place: NFD → strip CCC≠0 → NFC.
+/// Fold foldable diacritics in place: NFD → strip foldable marks → NFC.
 fn fold_diacritics_in_place(text: &mut String) {
     // Fast path: ASCII-only strings never have diacritics.
     if text.is_ascii() {
         return;
     }
-    // Fast path: check if NFD form has any combining marks.
-    if !text.nfd().any(|c| canonical_combining_class(c) != 0) {
+    // Fast path: check if NFD form has any foldable diacritics.
+    if !text.nfd().any(is_foldable_diacritic) {
         return;
     }
-    // Slow path: decompose, filter, recompose.
+    // Slow path: decompose, filter foldable marks, recompose.
     let folded: String = text
         .nfd()
-        .filter(|c| canonical_combining_class(*c) == 0)
+        .filter(|c| !is_foldable_diacritic(*c))
         .nfc()
         .collect();
     *text = folded;
@@ -87,6 +96,8 @@ fn fold_diacritics_in_place(text: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // === Latin diacritics (foldable — stripped) ===
 
     #[test]
     fn test_fold_basic_latin() {
@@ -119,7 +130,6 @@ mod tests {
 
     #[test]
     fn test_fold_uber() {
-        // After NFKC casefold, Ü → ü
         let mut s = "über".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "uber");
@@ -127,7 +137,6 @@ mod tests {
 
     #[test]
     fn test_fold_munchen() {
-        // After casefold: München → münchen
         let mut s = "münchen".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "munchen");
@@ -135,28 +144,64 @@ mod tests {
 
     #[test]
     fn test_fold_greek_accent() {
-        // ξένος (xi + epsilon-with-acute + nu + omicron + final-sigma)
-        // After casefold: ξένος → ξένος (already lowercase, but accent remains)
         let mut s = "ξένος".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "ξενος");
     }
 
     #[test]
-    fn test_fold_arabic_harakat() {
-        // كِتَابٌ → كتاب (harakat are combining marks)
-        let mut s = "كِتَابٌ".to_string();
-        fold_diacritics_in_place(&mut s);
-        assert_eq!(s, "كتاب");
-    }
-
-    #[test]
     fn test_fold_vietnamese() {
-        // phở has multiple diacritics on ơ
         let mut s = "phở".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "pho");
     }
+
+    #[test]
+    fn test_turkish_dotted_i() {
+        // İ after NFKC casefold → i̇ (i + combining dot above U+0307)
+        // DiacriticFolding removes the dot → "i"
+        let mut s = "i\u{0307}".to_string();
+        fold_diacritics_in_place(&mut s);
+        assert_eq!(s, "i");
+    }
+
+    // === Non-foldable marks (preserved) ===
+
+    #[test]
+    fn test_fold_preserves_dakuten() {
+        // Japanese dakuten (U+3099) is NOT in foldable range
+        // で (in NFD: て + dakuten) should stay で
+        let mut s = "で".to_string();
+        fold_diacritics_in_place(&mut s);
+        assert_eq!(s, "で");
+    }
+
+    #[test]
+    fn test_fold_preserves_devanagari() {
+        // Devanagari virama (U+094D) is NOT in foldable range
+        // क्ष should stay intact
+        let mut s = "क्ष".to_string();
+        fold_diacritics_in_place(&mut s);
+        assert_eq!(s, "क्ष");
+    }
+
+    #[test]
+    fn test_fold_preserves_arabic_harakat() {
+        // Arabic harakat are NOT in foldable range (handled by SemiticNorm)
+        let mut s = "كِتَابٌ".to_string();
+        fold_diacritics_in_place(&mut s);
+        assert_eq!(s, "كِتَابٌ");
+    }
+
+    #[test]
+    fn test_fold_preserves_hebrew_niqqud() {
+        // Hebrew niqqud NOT in foldable range (handled by SemiticNorm)
+        let mut s = "שָׁלוֹם".to_string();
+        fold_diacritics_in_place(&mut s);
+        assert_eq!(s, "שָׁלוֹם");
+    }
+
+    // === Unchanged inputs ===
 
     #[test]
     fn test_fold_ascii_unchanged() {
@@ -184,14 +229,5 @@ mod tests {
         let mut s = String::new();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "");
-    }
-
-    #[test]
-    fn test_turkish_dotted_i() {
-        // İ after NFKC casefold → i̇ (i + combining dot above U+0307)
-        // DiacriticFolding removes the dot → "i"
-        let mut s = "i\u{0307}".to_string(); // post-casefold form
-        fold_diacritics_in_place(&mut s);
-        assert_eq!(s, "i");
     }
 }

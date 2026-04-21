@@ -1,4 +1,8 @@
+pub const DEMO_SENTENCE: &str = "㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで挨拶した。8月10日、二 人 幸 终。";
+
 pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
+    // === Demo sentence (README worked example) ===
+    ("demo-1", DEMO_SENTENCE),
     // === Chinese ===
     ("zh-1", "我爱北京天安门"),
     ("zh-2", "北京是中国的首都"),
@@ -17,8 +21,6 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("ja-4", "食べる"),
     ("ja-5", "ありがとうございます"),
     ("ja-6", "日本語を勉強しています"),
-    ("ja-7", "葛飾区"),
-    ("ja-8", "葛\u{E0100}飾区"),
     ("ja-11", "タベル"),
     ("ja-12", "たべる"),
     ("ja-13", "がき"),
@@ -56,8 +58,6 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("de-1", "Stra\u{00DF}e"),                            // Straße
     ("gr-1", "\u{039E}\u{03AD}\u{03BD}\u{03BF}\u{03C2}"), // Ξένος
     ("tr-1", "\u{0130}stanbul"),                          // İstanbul
-    // === Signature ===
-    ("sig-1", "㋿Ξ㍾㍿"),
     // === Supplementary plane ===
     ("aux-1", "𠮷野家"),
     ("aux-2", "家𠮷野"),
@@ -72,10 +72,8 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("ext-2", "𠀀是另一个字"),
     ("ext-3", "𠀀𠁀"),
     // === Latin accent folding ===
-    ("fr-1", "na\u{00EF}ve"), // naïve
-    ("es-1", "ni\u{00F1}o"),  // niño
-    ("de-2", "\u{00FC}ber"),  // über
-    ("vi-1", "ph\u{1EDF}"),   // phở
+    ("es-1", "ni\u{00F1}o"), // niño
+    ("de-2", "\u{00FC}ber"), // über
     // === Arabic ===
     ("ar-1", "احمد"),     // Ahmed, no hamza
     ("ar-2", "أحمد"),     // Ahmed, hamza above
@@ -91,6 +89,21 @@ pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     ("ar-12", "في"),      // "in" with standard ya
     ("ar-13", "٢٠٢٤"),    // Arabic-Indic 2024
     ("ar-14", "۲۰۲۴"),    // Persian 2024
+    // === Hebrew ===
+    ("he-2", "שלום"), // shalom without niqqud
+    (
+        "he-3",
+        "\u{05D1}\u{05B0}\u{05BC}\u{05E8}\u{05B5}\u{05D0}\u{05E9}\u{05B4}\u{05C1}\u{05D9}\u{05EA}",
+    ), // בְּרֵאשִׁית (bereshit with niqqud)
+    ("he-4", "בראשית"), // bereshit without niqqud
+    // === Japanese dakuten preservation ===
+    ("ja-15", "でんわ"), // denwa (with dakuten)
+    ("ja-16", "てんわ"), // tenwa (without dakuten)
+    // === Devanagari ===
+    ("hi-1", "क्षमा"),       // kshama (with virama conjunct)
+    ("hi-2", "कमा"),        // kama (without conjunct)
+    ("hi-3", "हिन्दी भाषा"), // hindi bhasha (virama in न्दी)
+    ("hi-4", "हिंदी भाषा"),  // hindi bhasha (anusvara form, no virama)
     // === Long document ===
     ("long-1", LONG_DOCUMENT_TEXT),
 ];
@@ -149,7 +162,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "single_han_reiwa",
         query: "令",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Single '令' should match ㋿ doc via normalization",
@@ -157,7 +170,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "single_han_kabushiki",
         query: "株",
-        must_match: &["sig-1", "norm-2"],
+        must_match: &["demo-1", "norm-2"],
         must_not_match: &[],
         expect_empty: false,
         description: "Single '株' should match compatibility char docs",
@@ -182,7 +195,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "reiwa_bigram",
         query: "令和",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "'令和' should match ㋿ doc",
@@ -190,7 +203,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "meiji_bigram",
         query: "明治",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "'明治' should match ㍾ doc",
@@ -198,7 +211,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "kabushiki_gaisha",
         query: "株式会社",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "'株式会社' should match ㍿ doc",
@@ -206,7 +219,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "cross_expansion_bigram",
         query: "治株",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Bigram spanning NFKC expansion boundary: 治 from ㍾, 株 from ㍿",
@@ -253,12 +266,12 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         description: "Pure Katakana query with long vowel",
     },
     QueryTestCase {
-        name: "ja_katsushika",
-        query: "葛飾",
-        must_match: &["ja-7", "ja-8"],
+        name: "ivs_shimokitazawa",
+        query: "北沢",
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Variation selector doc should match plain query",
+        description: "Plain query matches doc with IVS on 沢 (IVS absorbed by NFKC)",
     },
     // === Korean ===
     QueryTestCase {
@@ -367,7 +380,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "reiwa_not_partial",
         query: "令和",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &["zh-1", "zh-2"],
         expect_empty: false,
         description: "Unrelated docs should not match",
@@ -487,7 +500,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "compat_reiwa_query",
         query: "㋿",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "㋿ as query should match sig-1 (normalizes to 令和)",
@@ -495,7 +508,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "compat_kabushiki_query",
         query: "㍿",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "㍿ as query should match sig-1 (normalizes to 株式会社)",
@@ -503,7 +516,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "compat_meiji_query",
         query: "㍾",
-        must_match: &["sig-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "㍾ as query should match sig-1 (normalizes to 明治)",
@@ -513,7 +526,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "compat_kabushiki_alt_query",
         query: "㈱",
-        must_match: &["norm-2", "sig-1"],
+        must_match: &["norm-2", "demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "㈱→(株): 株 isolated in bigram but caught by unigram fallback",
@@ -577,12 +590,12 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     },
     // P0: Variation selector symmetry (section 3.3)
     QueryTestCase {
-        name: "vs_query_no_vs_doc",
-        query: "葛\u{E0100}飾",
-        must_match: &["ja-7", "ja-8"],
+        name: "ivs_in_query",
+        query: "北沢\u{E0100}",
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
-        description: "Query with VS matches both VS and non-VS docs",
+        description: "Query with IVS matches doc with IVS (both stripped by NFKC)",
     },
     // P0: NFC/NFD symmetry (section 3.4)
     QueryTestCase {
@@ -1006,7 +1019,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "french_naive_plain",
         query: "naive",
-        must_match: &["fr-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Plain query matches accented doc: naïve",
@@ -1014,7 +1027,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "french_naive_accented",
         query: "na\u{00EF}ve", // naïve
-        must_match: &["fr-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Accented query matches accented doc: both fold to naive",
@@ -1054,7 +1067,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "vietnamese_pho_plain",
         query: "pho",
-        must_match: &["vi-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Plain query matches multi-diacritic doc: phở",
@@ -1062,7 +1075,7 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
     QueryTestCase {
         name: "vietnamese_pho_accented",
         query: "ph\u{1EDF}", // phở
-        must_match: &["vi-1"],
+        must_match: &["demo-1"],
         must_not_match: &[],
         expect_empty: false,
         description: "Accented query matches accented doc: both fold to pho",
@@ -1219,6 +1232,205 @@ pub const QUERY_TEST_CASES: &[QueryTestCase] = &[
         must_not_match: &[],
         expect_empty: false,
         description: "Punctuation in query is stripped by tokenizer",
+    },
+    //  ---- Smartcase diacritic tests (new) ----
+    //  P0: Japanese dakuten preservation
+    QueryTestCase {
+        name: "dakuten_preserved_de",
+        query: "でんわ",
+        must_match: &["ja-15"],
+        must_not_match: &["ja-16"],
+        expect_empty: false,
+        description: "Dakuten NOT foldable: で ≠ て",
+    },
+    QueryTestCase {
+        name: "dakuten_preserved_te",
+        query: "てんわ",
+        must_match: &["ja-16"],
+        must_not_match: &["ja-15"],
+        expect_empty: false,
+        description: "てんわ does not match でんわ",
+    },
+    //  P0: Hebrew niqqud normalization
+    QueryTestCase {
+        name: "hebrew_niqqud_stripped",
+        query: "שלום",
+        must_match: &["demo-1", "he-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Plain Hebrew matches niqqud doc: niqqud stripped by SemiticNorm",
+    },
+    QueryTestCase {
+        name: "hebrew_niqqud_in_query",
+        query: "\u{05E9}\u{05B8}\u{05C1}\u{05DC}\u{05D5}\u{05B9}\u{05DD}",
+        must_match: &["demo-1", "he-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Niqqud in query matches plain doc: both fold to שלום",
+    },
+    QueryTestCase {
+        name: "hebrew_bereshit",
+        query: "בראשית",
+        must_match: &["he-3", "he-4"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Plain בראשית matches niqqud version",
+    },
+    //  P0: Devanagari virama preservation
+    QueryTestCase {
+        name: "devanagari_virama_preserved",
+        query: "क्षमा",
+        must_match: &["hi-1"],
+        must_not_match: &["hi-2"],
+        expect_empty: false,
+        description: "Devanagari virama preserved: क्ष ≠ क",
+    },
+    QueryTestCase {
+        name: "devanagari_virama_recall",
+        query: "हिन्दी",
+        must_match: &["hi-3"],
+        must_not_match: &["hi-4"],
+        expect_empty: false,
+        description: "Virama form हिन्दी matches itself but not anusvara form हिंदी",
+    },
+    QueryTestCase {
+        name: "devanagari_anusvara_recall",
+        query: "हिंदी",
+        must_match: &["hi-4"],
+        must_not_match: &["hi-3"],
+        expect_empty: false,
+        description: "Anusvara form हिंदी matches itself but not virama form हिन्दी",
+    },
+    //  P0: Arabic harakat still stripped (now by SemiticNorm)
+    QueryTestCase {
+        name: "arabic_harakat_still_stripped",
+        query: "كتاب",
+        must_match: &["ar-7", "ar-8"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Arabic harakat still stripped (by SemiticNorm, not DiacriticFolding)",
+    },
+    //  P0: Smartcase Latin diacritics
+    QueryTestCase {
+        name: "smartcase_cafe_plain",
+        query: "cafe",
+        must_match: &["norm-8", "norm-9"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Plain 'cafe' matches accented docs via folded_bigram (café→cafe)",
+    },
+    QueryTestCase {
+        name: "smartcase_uber_plain",
+        query: "uber",
+        must_match: &["de-2"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Plain 'uber' matches über via folded_bigram",
+    },
+    //  ---- Query routing examples from README (against demo-1) ----
+    QueryTestCase {
+        name: "route_adjacent_cjk",
+        query: "下北沢",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Adjacent CJK → bigrams 下北, 北沢 → match",
+    },
+    QueryTestCase {
+        name: "route_bigram_no_match",
+        query: "二人",
+        must_match: &[],
+        must_not_match: &["demo-1"],
+        expect_empty: false,
+        description: "二人 bigram not in index (二 and 人 are space-separated in doc)",
+    },
+    QueryTestCase {
+        name: "route_space_separated_unigram",
+        query: "二 人",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Space in query → each char isolated → unigram lookup",
+    },
+    QueryTestCase {
+        name: "route_mixed_bigram_unigram",
+        query: "注文 幸",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "注文 adjacent → bigram; 幸 isolated → unigram",
+    },
+    QueryTestCase {
+        name: "route_noir_plain",
+        query: "noir",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Non-CJK, no diacritics → folded_bigram passthrough",
+    },
+    QueryTestCase {
+        name: "route_noir_with_diacritic",
+        query: "n\u{00F6}ir",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "nöir folds to noir in folded_bigram (match); diacritic has no nöir (no boost)",
+    },
+    QueryTestCase {
+        name: "route_the_plain",
+        query: "the",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "No diacritics → broad match (matches thé via folding)",
+    },
+    QueryTestCase {
+        name: "route_the_accented",
+        query: "th\u{00E9}",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "thé → folded_bigram (the) + diacritic (thé, boosted)",
+    },
+    QueryTestCase {
+        name: "route_pho_plain",
+        query: "pho",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "phở folded to pho in folded_bigram",
+    },
+    QueryTestCase {
+        name: "route_pho_accented",
+        query: "ph\u{1EDF}",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "phở → folded_bigram (pho) + diacritic (phở, boosted)",
+    },
+    QueryTestCase {
+        name: "route_naive_shimokitazawa",
+        query: "na\u{00EF}ve 下北沢",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Per-token: naïve→diacritic, 下北沢→folded_bigram",
+    },
+    QueryTestCase {
+        name: "route_single_han",
+        query: "月",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "Single Han char → unigram only",
+    },
+    QueryTestCase {
+        name: "route_number_han_mix",
+        query: "8月",
+        must_match: &["demo-1"],
+        must_not_match: &[],
+        expect_empty: false,
+        description: "8 is non-CJK, 月 is Han → no bigram; 月 falls back to unigram",
     },
 ];
 

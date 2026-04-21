@@ -245,9 +245,10 @@ pub fn run_automated_tests(
         };
 
         println!(
-            "{status} [{name}] query={query}",
+            "{status} [{name}] query={query}: {desc}",
             name = case.name,
             query = red(&escape_invisible(case.query)),
+            desc = case.description,
         );
         print_hits(&hits);
 
@@ -491,7 +492,7 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
 
     // Check that body_bigram field has positions
     let schema = searcher.schema();
-    let bigram_entry = schema.get_field_entry(fields.icu.bigram);
+    let bigram_entry = schema.get_field_entry(fields.icu.folded_bigram);
     let has_positions = bigram_entry
         .field_type()
         .get_index_record_option()
@@ -525,7 +526,7 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
             name: "phrase_reiwa_meiji",
             terms: &["令和", "和ξ"],
             must_match: &[],
-            must_not_match: &["sig-1"],
+            must_not_match: &["demo-1"],
             description: "No cross CJK/non-CJK bigram boundary",
         },
     ];
@@ -534,7 +535,7 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
         let terms: Vec<Term> = test
             .terms
             .iter()
-            .map(|t| Term::from_field_text(fields.icu.bigram, t))
+            .map(|t| Term::from_field_text(fields.icu.folded_bigram, t))
             .collect();
         let phrase_query = PhraseQuery::new(terms);
 

@@ -4,12 +4,12 @@
 //!
 //! | Module | Description |
 //! |--------|-------------|
-//! | [`filter`] | Token filters: [`CJKBigramFilter`], [`HanOnlyFilter`], [`DiacriticFoldingFilter`], [`ArabicNormalizationFilter`], and script classification utilities |
+//! | [`filter`] | Token filters: [`CJKBigramFilter`], [`HanOnlyFilter`], [`DiacriticFoldingFilter`], [`DiacriticOnlyFilter`], [`SemiticNormalizationFilter`], and script classification utilities |
 //! | [`normalizer`] | [`NormalizedText`]: NFKC Casefold normalization with byte offset mapping |
 //! | [`cjk`] | CJK character detection ([`is_cjk_char`]) and unigram expansion |
 //! | [`word_break`] | ICU word break iterator wrapper |
-//! | [`search`] | *(feature `tantivy-search`)* [`ICUSearchConfig`](search::ICUSearchConfig): dual-field schema, query routing, snippet generation |
-//! | `demo` | *(feature `demo`)* Test harness with 128 query test cases |
+//! | [`search`] | *(feature `tantivy-search`)* [`ICUSearchConfig`](search::ICUSearchConfig): three-field schema, smartcase query routing, snippet generation |
+//! | `demo` | *(feature `demo`)* Test harness with query test cases |
 
 pub mod cjk;
 #[cfg(feature = "demo")]
@@ -23,8 +23,10 @@ pub mod word_break;
 
 pub use cjk::is_cjk_char;
 pub use filter::{
-    ArabicNormalizationFilter, CJKBigramFilter, DiacriticFoldingFilter, HanOnlyFilter, ScriptGroup,
-    find_isolated_han_tokens, is_han_char, token_script_group,
+    CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter, HanOnlyFilter, ScriptGroup,
+    SemiticNormalizationFilter, find_isolated_han_tokens, has_foldable_diacritic,
+    is_foldable_diacritic, is_han_char, token_script_group,
 };
+
 pub use normalizer::NormalizedText;
 pub use tokenizer::NormalizingICUTokenizer;
