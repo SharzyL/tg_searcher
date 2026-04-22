@@ -1,5 +1,6 @@
 use tantivy_analyzer_icu::demo;
 use tantivy_analyzer_icu::demo::runner::interactive_mode;
+use tantivy_analyzer_icu::demo::test_cases::QUERY_TEST_GROUPS;
 use tantivy_analyzer_icu::search::ICUSearchConfig;
 
 fn main() -> tantivy::Result<()> {
@@ -19,7 +20,9 @@ fn main() -> tantivy::Result<()> {
         config.register_analyzers(&index);
 
         let mut writer = index.writer(50_000_000)?;
-        demo::index_documents(&writer, &fields)?;
+        for group in QUERY_TEST_GROUPS {
+            demo::index_group_documents(&writer, &fields, group)?;
+        }
         writer.commit()?;
 
         let reader = index.reader()?;

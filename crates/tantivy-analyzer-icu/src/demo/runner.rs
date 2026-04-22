@@ -4,10 +4,11 @@ use std::fmt::Write as _;
 use crate::search::ICUSearchConfig;
 use tantivy::query::PhraseQuery;
 use tantivy::schema::IndexRecordOption;
-use tantivy::{Result, Searcher, Term};
+use tantivy::{Index, IndexWriter, Result, Searcher, Term};
 
 use super::search::{DemoFields, SearchHit, search_with_snippets};
-use super::test_cases::{QUERY_TEST_CASES, TEST_DOCUMENTS};
+use super::test_cases::{QUERY_TEST_GROUPS, QueryTestGroup};
+use super::{build_demo_schema, index_group_documents};
 
 /// Format a string with non-printable and invisible Unicode characters escaped
 /// as `\u{xxxx}`, so they are visible in terminal output.
@@ -48,18 +49,20 @@ fn is_invisible_unicode(c: char) -> bool {
     ) {
         return true;
     }
+    // Hangul Jamo (conjoining): terminals auto-compose these into syllable blocks
+    if matches!(cp, 0x1100..=0x11FF | 0xA960..=0xA97F | 0xD7B0..=0xD7FF) {
+        return true;
+    }
     false
 }
 
-pub fn print_test_documents() {
-    println!("=== Test Documents ({}) ===", TEST_DOCUMENTS.len());
-    for (id, body) in TEST_DOCUMENTS {
-        println!("  [{id}] {}", escape_invisible(body));
-    }
-    println!();
-}
-
 const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
+const MAGENTA: &str = "\x1b[35m";
+const GRAY: &str = "\x1b[90m";
+const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
 /// Merge overlapping/adjacent byte ranges into non-overlapping sorted ranges.
@@ -79,17 +82,19 @@ fn merge_ranges(ranges: &[std::ops::Range<usize>]) -> Vec<std::ops::Range<usize>
     merged
 }
 
-/// Render a snippet fragment with ANSI red highlights.
+/// Render a snippet fragment with ANSI red highlights on matched ranges, gray for the rest.
 fn render_snippet_ansi(fragment: &str, ranges: &[std::ops::Range<usize>]) -> String {
     if ranges.is_empty() {
-        return escape_invisible(fragment);
+        return format!("{GRAY}{}{RESET}", escape_invisible(fragment));
     }
     let merged = merge_ranges(ranges);
     let mut out = String::new();
     let mut pos = 0;
     for range in &merged {
         if range.start > pos {
+            out.push_str(GRAY);
             out.push_str(&escape_invisible(&fragment[pos..range.start]));
+            out.push_str(RESET);
         }
         out.push_str(RED);
         out.push_str(&escape_invisible(&fragment[range.start..range.end]));
@@ -97,14 +102,11 @@ fn render_snippet_ansi(fragment: &str, ranges: &[std::ops::Range<usize>]) -> Str
         pos = range.end;
     }
     if pos < fragment.len() {
+        out.push_str(GRAY);
         out.push_str(&escape_invisible(&fragment[pos..]));
+        out.push_str(RESET);
     }
     out
-}
-
-/// Wrap text in ANSI red.
-fn red(s: &str) -> String {
-    format!("{RED}{s}{RESET}")
 }
 
 fn print_hits(hits: &[SearchHit]) {
@@ -114,7 +116,7 @@ fn print_hits(hits: &[SearchHit]) {
     }
     for (i, hit) in hits.iter().enumerate() {
         println!("  {}. [{}] score={:.3}", i + 1, hit.id, hit.score);
-        println!("     body:    {}", escape_invisible(&hit.body));
+        println!("     body:    {GRAY}{}{RESET}", escape_invisible(&hit.body));
         if !hit.highlighted_ranges.is_empty() {
             println!(
                 "     snippet: {}",
@@ -124,154 +126,197 @@ fn print_hits(hits: &[SearchHit]) {
     }
 }
 
-pub fn run_automated_tests(
-    searcher: &Searcher,
+fn print_group_header(title: &str) {
+    let bar = "─".repeat(60);
+    println!("{MAGENTA}{BOLD}┌{bar}┐{RESET}");
+    println!("{MAGENTA}{BOLD}│ {title:^58} │{RESET}");
+    println!("{MAGENTA}{BOLD}└{bar}┘{RESET}");
+}
+
+fn print_group_docs(group: &QueryTestGroup) {
+    println!("  Documents ({}):", group.docs.len());
+    for (id, body) in group.docs {
+        println!("    [{id}] {GRAY}{}{RESET}", escape_invisible(body));
+    }
+    println!();
+}
+
+/// Create an in-RAM index with the given group's documents.
+fn create_group_index(
     config: &ICUSearchConfig,
-    fields: &DemoFields,
-) -> Result<bool> {
-    let mut passed = 0;
-    let mut failed = Vec::new();
+    group: &QueryTestGroup,
+) -> Result<(Index, DemoFields)> {
+    let (schema, fields) = build_demo_schema(config);
+    let index = Index::create_in_ram(schema);
+    config.register_analyzers(&index);
+    let mut writer: IndexWriter = index.writer(50_000_000)?;
+    index_group_documents(&writer, &fields, group)?;
+    writer.commit()?;
+    Ok((index, fields))
+}
 
-    for case in QUERY_TEST_CASES {
-        let query = match config.route_query(searcher, &fields.icu, case.query) {
-            Ok(q) => q,
-            Err(_) if case.expect_empty => {
-                // Parse error on degenerate input that expects empty results — OK
-                passed += 1;
-                println!(
-                    "PASS [{name}] query={query} (parse error → empty)",
-                    name = case.name,
-                    query = red(&escape_invisible(case.query)),
-                );
-                println!("  (no hits)\n");
-                continue;
-            }
-            Err(e) => return Err(e),
-        };
-        let hits = search_with_snippets(searcher, query.as_ref(), fields, 100)?;
-        let hit_ids: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
+pub fn run_group_tests(config: &ICUSearchConfig) -> Result<bool> {
+    let mut total_passed = 0;
+    let mut total_cases = 0;
+    let mut all_failed = Vec::new();
 
-        let mut errors = Vec::new();
-
-        if case.expect_empty && !hits.is_empty() {
-            errors.push(format!(
-                "expected empty results, got {} hits: {:?}",
-                hits.len(),
-                hit_ids.iter().collect::<Vec<_>>()
-            ));
-        }
-
-        for required in case.must_match {
-            if !hit_ids.contains(*required) {
-                errors.push(format!("missing expected hit: {}", required));
-            }
-        }
-
-        for forbidden in case.must_not_match {
-            if hit_ids.contains(*forbidden) {
-                errors.push(format!("unexpected hit: {}", forbidden));
-            }
-        }
-
-        // Verify scores are descending
-        for w in hits.windows(2) {
-            if w[0].score < w[1].score {
-                errors.push(format!(
-                    "scores not descending: {} ({:.3}) < {} ({:.3})",
-                    w[0].id, w[0].score, w[1].id, w[1].score
-                ));
-                break;
-            }
-        }
-
-        // Verify highlight ranges are at char boundaries of snippet fragment
-        for hit in &hits {
-            let frag = &hit.snippet_fragment;
-            for range in &hit.highlighted_ranges {
-                if range.start > frag.len() || range.end > frag.len() {
-                    errors.push(format!(
-                        "highlight range {:?} out of bounds for fragment len {}",
-                        range,
-                        frag.len()
-                    ));
-                } else {
-                    if !frag.is_char_boundary(range.start) {
-                        errors.push(format!(
-                            "highlight start {} not at char boundary in {}",
-                            range.start, hit.id
-                        ));
-                    }
-                    if !frag.is_char_boundary(range.end) {
-                        errors.push(format!(
-                            "highlight end {} not at char boundary in {}",
-                            range.end, hit.id
-                        ));
-                    }
-                    // Verify slicing doesn't panic
-                    let _ = &frag[range.start..range.end];
-                }
-            }
-
-            // Verify merged ranges cover the fragment without duplication:
-            // the concatenation of highlighted + non-highlighted spans must
-            // equal the original fragment text.
-            let merged = merge_ranges(&hit.highlighted_ranges);
-            let mut reconstructed = String::new();
-            let mut pos = 0;
-            for range in &merged {
-                if range.start > pos {
-                    reconstructed.push_str(&frag[pos..range.start]);
-                }
-                reconstructed.push_str(&frag[range.start..range.end]);
-                pos = range.end;
-            }
-            if pos < frag.len() {
-                reconstructed.push_str(&frag[pos..]);
-            }
-            if reconstructed != *frag {
-                errors.push(format!(
-                    "merged highlight reconstruction mismatch in {}: {:?} vs {:?}",
-                    hit.id, reconstructed, frag
-                ));
-            }
-        }
-
-        let status = if errors.is_empty() {
-            passed += 1;
-            "PASS"
-        } else {
-            "FAIL"
-        };
-
-        println!(
-            "{status} [{name}] query={query}: {desc}",
-            name = case.name,
-            query = red(&escape_invisible(case.query)),
-            desc = case.description,
-        );
-        print_hits(&hits);
-
-        if !errors.is_empty() {
-            for err in &errors {
-                println!("  !! {err}");
-            }
-            failed.push((case, errors));
+    for group in QUERY_TEST_GROUPS {
+        if group.cases.is_empty() {
+            continue;
         }
 
         println!();
+        print_group_header(group.name);
+        print_group_docs(group);
+
+        let (index, fields) = create_group_index(config, group)?;
+        let reader = index.reader()?;
+        let searcher = reader.searcher();
+
+        let mut passed = 0;
+
+        for case in group.cases {
+            let query = match config.route_query(&searcher, &fields.icu, case.query) {
+                Ok(q) => q,
+                Err(_) if case.matches.is_empty() => {
+                    passed += 1;
+                    println!(
+                        "{GREEN}PASS{RESET} {name}: {YELLOW}{desc}{RESET}",
+                        name = case.name,
+                        desc = case.description,
+                    );
+                    println!(
+                        "Query: {RED}{}{RESET} -> {BLUE}(parse error → empty){RESET}",
+                        escape_invisible(case.query),
+                    );
+                    println!("  (no hits)\n");
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            let query_debug = format!("{:?}", query);
+            let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
+            let hit_ids: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
+            let expected: HashSet<&str> = case.matches.iter().copied().collect();
+
+            let mut errors = Vec::new();
+
+            for id in &expected {
+                if !hit_ids.contains(*id) {
+                    errors.push(format!("missing expected hit: {id}"));
+                }
+            }
+            for id in &hit_ids {
+                if !expected.contains(id.as_str()) {
+                    errors.push(format!("unexpected hit: {id}"));
+                }
+            }
+
+            // Verify scores are descending
+            for w in hits.windows(2) {
+                if w[0].score < w[1].score {
+                    errors.push(format!(
+                        "scores not descending: {} ({:.3}) < {} ({:.3})",
+                        w[0].id, w[0].score, w[1].id, w[1].score
+                    ));
+                    break;
+                }
+            }
+
+            // Verify highlight ranges are at char boundaries of snippet fragment
+            for hit in &hits {
+                let frag = &hit.snippet_fragment;
+                for range in &hit.highlighted_ranges {
+                    if range.start > frag.len() || range.end > frag.len() {
+                        errors.push(format!(
+                            "highlight range {:?} out of bounds for fragment len {}",
+                            range,
+                            frag.len()
+                        ));
+                    } else {
+                        if !frag.is_char_boundary(range.start) {
+                            errors.push(format!(
+                                "highlight start {} not at char boundary in {}",
+                                range.start, hit.id
+                            ));
+                        }
+                        if !frag.is_char_boundary(range.end) {
+                            errors.push(format!(
+                                "highlight end {} not at char boundary in {}",
+                                range.end, hit.id
+                            ));
+                        }
+                        let _ = &frag[range.start..range.end];
+                    }
+                }
+
+                let merged = merge_ranges(&hit.highlighted_ranges);
+                let mut reconstructed = String::new();
+                let mut pos = 0;
+                for range in &merged {
+                    if range.start > pos {
+                        reconstructed.push_str(&frag[pos..range.start]);
+                    }
+                    reconstructed.push_str(&frag[range.start..range.end]);
+                    pos = range.end;
+                }
+                if pos < frag.len() {
+                    reconstructed.push_str(&frag[pos..]);
+                }
+                if reconstructed != *frag {
+                    errors.push(format!(
+                        "merged highlight reconstruction mismatch in {}: {:?} vs {:?}",
+                        hit.id, reconstructed, frag
+                    ));
+                }
+            }
+
+            let (status, status_color) = if errors.is_empty() {
+                passed += 1;
+                ("PASS", GREEN)
+            } else {
+                ("FAIL", RED)
+            };
+
+            println!(
+                "{status_color}{status}{RESET} {name}: {YELLOW}{desc}{RESET}",
+                name = case.name,
+                desc = case.description,
+            );
+            println!(
+                "Query: {RED}{}{RESET} -> {BLUE}{query_debug}{RESET}",
+                escape_invisible(case.query),
+            );
+            print_hits(&hits);
+
+            if !errors.is_empty() {
+                for err in &errors {
+                    println!("  !! {err}");
+                }
+                all_failed.push((group.name, case, errors));
+            }
+
+            println!();
+        }
+
+        total_passed += passed;
+        total_cases += group.cases.len();
+        println!(
+            "  {GRAY}Group result: {passed}/{}{RESET}",
+            group.cases.len()
+        );
     }
 
-    println!("=== Test Summary ===");
-    println!("Passed: {}/{}", passed, QUERY_TEST_CASES.len());
+    println!("\n=== Test Summary ===");
+    println!("Passed: {total_passed}/{total_cases}");
 
-    if !failed.is_empty() {
+    if !all_failed.is_empty() {
         println!("\n=== Failures ===");
-        for (case, errors) in &failed {
+        for (group_name, case, errors) in &all_failed {
             println!(
-                "  FAIL [{}] query={}: {}",
-                case.name,
-                red(&escape_invisible(case.query)),
-                case.description
+                "  {RED}FAIL{RESET} [{group_name}] {name}: {YELLOW}{desc}{RESET}",
+                name = case.name,
+                desc = case.description,
             );
             for err in errors {
                 println!("    - {err}");
@@ -279,22 +324,22 @@ pub fn run_automated_tests(
         }
     }
 
-    Ok(failed.is_empty())
+    Ok(all_failed.is_empty())
 }
 
 /// Run the very_long_query stress test.
-pub fn run_very_long_query_test(
-    searcher: &Searcher,
-    config: &ICUSearchConfig,
-    fields: &DemoFields,
-) -> Result<bool> {
-    println!("=== Very Long Query Test ===");
+pub fn run_very_long_query_test(config: &ICUSearchConfig) -> Result<bool> {
+    println!("\n=== Very Long Query Test ===");
+
+    // Need a minimal index to run a query against
+    let group = &QUERY_TEST_GROUPS[0]; // any non-empty group
+    let (index, fields) = create_group_index(config, group)?;
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+
     let query_text = super::test_cases::very_long_query();
-    let query = config.route_query(searcher, &fields.icu, &query_text)?;
-    let hits = search_with_snippets(searcher, query.as_ref(), fields, 100)?;
-    // Should not panic. Returns 0 hits because adjacent "北北北..." produces
-    // bigram terms that don't exist in any document (no unigram fallback since
-    // all chars are offset-adjacent).
+    let query = config.route_query(&searcher, &fields.icu, &query_text)?;
+    let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
     println!(
         "PASS [very_long_query] 1000x'北': {} hits returned",
         hits.len()
@@ -304,21 +349,25 @@ pub fn run_very_long_query_test(
 }
 
 /// Run long document snippet tests.
-pub fn run_long_doc_snippet_tests(
-    searcher: &Searcher,
-    config: &ICUSearchConfig,
-    fields: &DemoFields,
-) -> Result<bool> {
+pub fn run_long_doc_snippet_tests(config: &ICUSearchConfig) -> Result<bool> {
     println!("=== Long Document Snippet Tests ===");
     let mut ok = true;
 
-    let query = config.route_query(searcher, &fields.icu, "北京")?;
-    let hits = search_with_snippets(searcher, query.as_ref(), fields, 100)?;
+    // Find the group containing long-1
+    let group = QUERY_TEST_GROUPS
+        .iter()
+        .find(|g| g.docs.iter().any(|(id, _)| *id == "long-1"))
+        .expect("No group contains long-1 document");
+    let (index, fields) = create_group_index(config, group)?;
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+
+    let query = config.route_query(&searcher, &fields.icu, "北京")?;
+    let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
 
     let long_hit = hits.iter().find(|h| h.id == "long-1");
     if let Some(hit) = long_hit {
         let frag = &hit.snippet_fragment;
-        // Snippet should be shorter than original
         if frag.len() < hit.body.len() {
             println!(
                 "PASS [long_doc_snippet_window] snippet ({} bytes) < body ({} bytes)",
@@ -333,7 +382,6 @@ pub fn run_long_doc_snippet_tests(
             );
             ok = false;
         }
-        // Snippet should have reasonable upper bound
         if frag.len() < 1000 {
             println!(
                 "PASS [long_doc_snippet_bounded] snippet {} bytes < 1000",
@@ -346,7 +394,6 @@ pub fn run_long_doc_snippet_tests(
             );
             ok = false;
         }
-        // Snippet should contain 北京
         if frag.contains("北京") {
             println!("PASS [long_doc_snippet_contains] snippet contains 北京");
         } else {
@@ -363,13 +410,18 @@ pub fn run_long_doc_snippet_tests(
 }
 
 /// Run property-based tests using a fixed set of adversarial inputs.
-pub fn run_property_tests(
-    searcher: &Searcher,
-    config: &ICUSearchConfig,
-    fields: &DemoFields,
-) -> Result<bool> {
+pub fn run_property_tests(config: &ICUSearchConfig) -> Result<bool> {
     println!("=== Property Tests ===");
     let mut ok = true;
+
+    // Use the first non-empty group for a representative index
+    let group = QUERY_TEST_GROUPS
+        .iter()
+        .find(|g| !g.docs.is_empty())
+        .expect("No non-empty group");
+    let (index, fields) = create_group_index(config, group)?;
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
 
     let adversarial_inputs: &[&str] = &[
         "",
@@ -408,11 +460,9 @@ pub fn run_property_tests(
     ];
 
     for (i, input) in adversarial_inputs.iter().enumerate() {
-        // Test 1: route() should not panic
-        let query = match config.route_query(searcher, &fields.icu, input) {
+        let query = match config.route_query(&searcher, &fields.icu, input) {
             Ok(q) => q,
             Err(e) => {
-                // Parse errors on degenerate input are OK, not failures
                 println!(
                     "  [prop-{i}] parse error on {:?}: {} (OK)",
                     escape_invisible(input),
@@ -422,10 +472,8 @@ pub fn run_property_tests(
             }
         };
 
-        // Test 2: search should not panic
-        let hits = search_with_snippets(searcher, query.as_ref(), fields, 10)?;
+        let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
 
-        // Test 3: all highlight ranges at char boundaries and sliceable
         for hit in &hits {
             let frag = &hit.snippet_fragment;
             for range in &hit.highlighted_ranges {
@@ -450,8 +498,7 @@ pub fn run_property_tests(
             }
         }
 
-        // Test 4: determinism — search again, same results
-        let hits2 = search_with_snippets(searcher, query.as_ref(), fields, 10)?;
+        let hits2 = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
         if hits.len() != hits2.len() {
             println!(
                 "FAIL [prop-{i}] non-deterministic: {} vs {} hits",
@@ -482,11 +529,19 @@ pub fn run_property_tests(
 }
 
 /// Run PhraseQuery tests on the bigram field.
-pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool> {
+pub fn run_phrase_tests(config: &ICUSearchConfig) -> Result<bool> {
     println!("=== PhraseQuery Tests ===");
     let mut ok = true;
 
-    // Check that body_bigram field has positions
+    // Phrase tests need zh-1, zh-2, zh-3, demo-1
+    let group = QUERY_TEST_GROUPS
+        .iter()
+        .find(|g| g.docs.iter().any(|(id, _)| *id == "zh-1"))
+        .expect("No group contains zh-1");
+    let (index, fields) = create_group_index(config, group)?;
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+
     let schema = searcher.schema();
     let bigram_entry = schema.get_field_entry(fields.icu.folded_bigram);
     let has_positions = bigram_entry
@@ -508,7 +563,6 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
     }
 
     let phrase_tests = &[
-        // 北京天安 → bigrams 北京, 京天, 天安 at consecutive positions
         PhraseTest {
             name: "phrase_beijing_tianan",
             terms: &["北京", "京天", "天安"],
@@ -516,8 +570,6 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
             must_not_match: &["zh-2", "zh-3"],
             description: "Consecutive bigrams in zh-1 我爱北京天安门",
         },
-        // 令和 and ξ are from different token types (CJK bigram vs non-CJK passthrough).
-        // No bigram 和ξ should exist, so phrase [令和, 和ξ] should not match.
         PhraseTest {
             name: "phrase_reiwa_meiji",
             terms: &["令和", "和ξ"],
@@ -535,7 +587,7 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
             .collect();
         let phrase_query = PhraseQuery::new(terms);
 
-        let hits = search_with_snippets(searcher, &phrase_query, fields, 100)?;
+        let hits = search_with_snippets(&searcher, &phrase_query, &fields, 100)?;
         let hit_ids: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
 
         let mut errors = Vec::new();
@@ -573,18 +625,23 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
 }
 
 /// Run score-specific tests.
-pub fn run_score_tests(
-    searcher: &Searcher,
-    config: &ICUSearchConfig,
-    fields: &DemoFields,
-) -> Result<bool> {
+pub fn run_score_tests(config: &ICUSearchConfig) -> Result<bool> {
     println!("=== Score Tests ===");
     let mut ok = true;
 
+    // Need a group with zh-6 ("我")
+    let group = QUERY_TEST_GROUPS
+        .iter()
+        .find(|g| g.docs.iter().any(|(id, _)| *id == "zh-6"))
+        .expect("No group contains zh-6");
+    let (index, fields) = create_group_index(config, group)?;
+    let reader = index.reader()?;
+    let searcher = reader.searcher();
+
     // exact_doc_ranks_high: "我" query, zh-6 (just "我") should be in top 3
     {
-        let query = config.route_query(searcher, &fields.icu, "我")?;
-        let hits = search_with_snippets(searcher, query.as_ref(), fields, 10)?;
+        let query = config.route_query(&searcher, &fields.icu, "我")?;
+        let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
         let top3: Vec<&str> = hits.iter().take(3).map(|h| h.id.as_str()).collect();
         if top3.contains(&"zh-6") {
             println!("PASS [exact_doc_ranks_high] zh-6 in top 3: {:?}", top3);

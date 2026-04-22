@@ -8,13 +8,13 @@ pub mod runner;
 pub mod search;
 pub mod test_cases;
 
+use tantivy::IndexWriter;
 use tantivy::doc;
 use tantivy::schema::{STORED, STRING, Schema};
-use tantivy::{Index, IndexWriter};
 
 use crate::search::ICUSearchConfig;
 use search::DemoFields;
-use test_cases::TEST_DOCUMENTS;
+use test_cases::QueryTestGroup;
 
 /// Build the demo schema and fields.
 pub fn build_demo_schema(config: &ICUSearchConfig) -> (Schema, DemoFields) {
@@ -24,9 +24,13 @@ pub fn build_demo_schema(config: &ICUSearchConfig) -> (Schema, DemoFields) {
     (builder.build(), DemoFields { id, icu })
 }
 
-/// Index all test documents.
-pub fn index_documents(writer: &IndexWriter, fields: &DemoFields) -> tantivy::Result<()> {
-    for (id, body) in TEST_DOCUMENTS {
+/// Index a group's documents into the given writer.
+pub fn index_group_documents(
+    writer: &IndexWriter,
+    fields: &DemoFields,
+    group: &QueryTestGroup,
+) -> tantivy::Result<()> {
+    for (id, body) in group.docs {
         writer.add_document(doc!(
             fields.id => *id,
             fields.icu.stored => *body,
@@ -43,27 +47,14 @@ pub fn run_all_tests() -> tantivy::Result<bool> {
     use runner::*;
 
     let config = ICUSearchConfig::default();
-    let (schema, fields) = build_demo_schema(&config);
-    let index = Index::create_in_ram(schema);
-    config.register_analyzers(&index);
-
-    let mut writer: IndexWriter = index.writer(50_000_000)?;
-    index_documents(&writer, &fields)?;
-    writer.commit()?;
-
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    print_test_documents();
-
     let mut all_ok = true;
 
-    all_ok &= run_automated_tests(&searcher, &config, &fields)?;
-    all_ok &= run_very_long_query_test(&searcher, &config, &fields)?;
-    all_ok &= run_long_doc_snippet_tests(&searcher, &config, &fields)?;
-    all_ok &= run_property_tests(&searcher, &config, &fields)?;
-    all_ok &= run_phrase_tests(&searcher, &fields)?;
-    all_ok &= run_score_tests(&searcher, &config, &fields)?;
+    all_ok &= run_group_tests(&config)?;
+    all_ok &= run_very_long_query_test(&config)?;
+    all_ok &= run_long_doc_snippet_tests(&config)?;
+    all_ok &= run_property_tests(&config)?;
+    all_ok &= run_phrase_tests(&config)?;
+    all_ok &= run_score_tests(&config)?;
 
     Ok(all_ok)
 }
