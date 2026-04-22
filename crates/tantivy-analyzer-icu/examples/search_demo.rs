@@ -24,7 +24,7 @@ fn main() -> tantivy::Result<()> {
 
         let reader = index.reader()?;
         let searcher = reader.searcher();
-        interactive_mode(&searcher, &config, &index, &fields)?;
+        interactive_mode(&searcher, &config, &fields)?;
     }
 
     Ok(())

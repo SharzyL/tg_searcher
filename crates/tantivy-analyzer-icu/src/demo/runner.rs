@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use crate::search::ICUSearchConfig;
 use tantivy::query::PhraseQuery;
 use tantivy::schema::IndexRecordOption;
-use tantivy::{Index, Result, Searcher, Term};
+use tantivy::{Result, Searcher, Term};
 
 use super::search::{DemoFields, SearchHit, search_with_snippets};
 use super::test_cases::{QUERY_TEST_CASES, TEST_DOCUMENTS};
@@ -127,14 +127,13 @@ fn print_hits(hits: &[SearchHit]) {
 pub fn run_automated_tests(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<bool> {
     let mut passed = 0;
     let mut failed = Vec::new();
 
     for case in QUERY_TEST_CASES {
-        let query = match config.route_query(index, &fields.icu, case.query) {
+        let query = match config.route_query(searcher, &fields.icu, case.query) {
             Ok(q) => q,
             Err(_) if case.expect_empty => {
                 // Parse error on degenerate input that expects empty results — OK
@@ -287,12 +286,11 @@ pub fn run_automated_tests(
 pub fn run_very_long_query_test(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<bool> {
     println!("=== Very Long Query Test ===");
     let query_text = super::test_cases::very_long_query();
-    let query = config.route_query(index, &fields.icu, &query_text)?;
+    let query = config.route_query(searcher, &fields.icu, &query_text)?;
     let hits = search_with_snippets(searcher, query.as_ref(), fields, 100)?;
     // Should not panic. Returns 0 hits because adjacent "北北北..." produces
     // bigram terms that don't exist in any document (no unigram fallback since
@@ -309,13 +307,12 @@ pub fn run_very_long_query_test(
 pub fn run_long_doc_snippet_tests(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<bool> {
     println!("=== Long Document Snippet Tests ===");
     let mut ok = true;
 
-    let query = config.route_query(index, &fields.icu, "北京")?;
+    let query = config.route_query(searcher, &fields.icu, "北京")?;
     let hits = search_with_snippets(searcher, query.as_ref(), fields, 100)?;
 
     let long_hit = hits.iter().find(|h| h.id == "long-1");
@@ -369,7 +366,6 @@ pub fn run_long_doc_snippet_tests(
 pub fn run_property_tests(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<bool> {
     println!("=== Property Tests ===");
@@ -413,7 +409,7 @@ pub fn run_property_tests(
 
     for (i, input) in adversarial_inputs.iter().enumerate() {
         // Test 1: route() should not panic
-        let query = match config.route_query(index, &fields.icu, input) {
+        let query = match config.route_query(searcher, &fields.icu, input) {
             Ok(q) => q,
             Err(e) => {
                 // Parse errors on degenerate input are OK, not failures
@@ -580,7 +576,6 @@ pub fn run_phrase_tests(searcher: &Searcher, fields: &DemoFields) -> Result<bool
 pub fn run_score_tests(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<bool> {
     println!("=== Score Tests ===");
@@ -588,7 +583,7 @@ pub fn run_score_tests(
 
     // exact_doc_ranks_high: "我" query, zh-6 (just "我") should be in top 3
     {
-        let query = config.route_query(index, &fields.icu, "我")?;
+        let query = config.route_query(searcher, &fields.icu, "我")?;
         let hits = search_with_snippets(searcher, query.as_ref(), fields, 10)?;
         let top3: Vec<&str> = hits.iter().take(3).map(|h| h.id.as_str()).collect();
         if top3.contains(&"zh-6") {
@@ -606,7 +601,6 @@ pub fn run_score_tests(
 pub fn interactive_mode(
     searcher: &Searcher,
     config: &ICUSearchConfig,
-    index: &Index,
     fields: &DemoFields,
 ) -> Result<()> {
     use std::io::{self, BufRead, Write};
@@ -630,7 +624,7 @@ pub fn interactive_mode(
             break;
         }
 
-        let query = config.route_query(index, &fields.icu, query_text)?;
+        let query = config.route_query(searcher, &fields.icu, query_text)?;
         let hits = search_with_snippets(searcher, query.as_ref(), fields, 10)?;
 
         println!("Found {} hits:", hits.len());

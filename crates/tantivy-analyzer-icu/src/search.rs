@@ -25,7 +25,7 @@
 //! ))?;
 //!
 //! // Query routing (smartcase: café→diacritic, cafe→folded_bigram)
-//! let query = icu.route_query(&index, &content, "café 北京 我")?;
+//! let query = icu.route_query(&searcher, &content, "café 北京 我")?;
 //!
 //! // Snippet generation with three-way highlight merging
 //! let snippet = icu.snippet(&searcher, &query, &content, &body);
@@ -33,13 +33,13 @@
 
 use std::ops::Range;
 
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
+use tantivy::query::{BooleanQuery, ConstScoreQuery, Occur, PhraseQuery, Query, TermQuery};
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, SchemaBuilder, TextFieldIndexing, TextOptions,
 };
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::TextAnalyzer;
-use tantivy::{Index, Searcher, Term};
+use tantivy::{Index, Score, Searcher, Term};
 use tantivy_tokenizer_api::{Token, TokenStream};
 
 use crate::filter::{
@@ -51,6 +51,16 @@ use crate::{
 };
 
 const DEFAULT_MAX_SNIPPET_CHARS: usize = 150;
+
+/// Boost factor for diacritic field clauses relative to IDF.
+const DIACRITIC_BOOST: Score = 1.5;
+
+/// Compute IDF using the same formula as tantivy's BM25:
+/// `ln(1 + (N - n + 0.5) / (n + 0.5))`
+fn compute_idf(doc_freq: u64, total_num_docs: u64) -> Score {
+    let x = ((total_num_docs - doc_freq) as Score + 0.5) / (doc_freq as Score + 0.5);
+    (1.0 + x).ln()
+}
 
 /// A group of tantivy fields for ICU full-text search on a single text source.
 ///
@@ -182,13 +192,18 @@ impl ICUSearchConfig {
     ///
     /// Tokenizes the query text once, then builds term queries for all three
     /// fields without going through `QueryParser`:
-    /// - Adjacent CJK characters → folded_bigram field (boosted 2x)
+    /// - Adjacent CJK characters → folded_bigram field
     /// - Isolated Han characters → unigram field TermQueries
     /// - Non-CJK text → folded_bigram field passthrough
-    /// - If the query contains foldable diacritics → also diacritic field (boosted 3x)
+    /// - If the query contains foldable diacritics → also diacritic field (boosted 1.5x)
+    ///
+    /// All clauses use `ConstScoreQuery` with manual IDF instead of BM25,
+    /// eliminating document length normalization which is harmful for short
+    /// messages (long docs matching more terms would otherwise score lower
+    /// than short docs matching fewer terms).
     pub fn route_query(
         &self,
-        _index: &Index,
+        searcher: &Searcher,
         fields: &ICUFieldGroup,
         query_text: &str,
     ) -> tantivy::Result<Box<dyn Query>> {
@@ -202,44 +217,70 @@ impl ICUSearchConfig {
             diacritic_terms,
         } = Self::derive_query_terms(&semitic_tokens);
 
+        let total_num_docs = searcher.num_docs();
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-        // Build folded_bigram clauses (boosted 2x).
+        // Build folded_bigram clauses with IDF scoring.
         // Each group is either a single term or a phrase (from a CJK bigram run).
         for group in &folded_bigram_groups {
-            let q: Box<dyn Query> = if group.len() == 1 {
-                Box::new(TermQuery::new(
-                    Term::from_field_text(fields.folded_bigram, &group[0]),
-                    IndexRecordOption::WithFreqsAndPositions,
-                ))
+            if group.len() == 1 {
+                let term = Term::from_field_text(fields.folded_bigram, &group[0]);
+                let doc_freq = searcher.doc_freq(&term)?;
+                let idf = compute_idf(doc_freq, total_num_docs);
+                let q = TermQuery::new(term, IndexRecordOption::WithFreqsAndPositions);
+                clauses.push((
+                    Occur::Should,
+                    Box::new(ConstScoreQuery::new(Box::new(q), idf)),
+                ));
             } else {
-                // Multi-bigram run → PhraseQuery to match the exact sequence
+                // Multi-bigram run → PhraseQuery to match the exact sequence.
+                // Use the max IDF among the phrase's terms as the score.
                 let terms: Vec<Term> = group
                     .iter()
                     .map(|t| Term::from_field_text(fields.folded_bigram, t))
                     .collect();
-                Box::new(PhraseQuery::new(terms))
+                let max_idf = terms
+                    .iter()
+                    .map(|t| {
+                        searcher
+                            .doc_freq(t)
+                            .map(|df| compute_idf(df, total_num_docs))
+                    })
+                    .collect::<tantivy::Result<Vec<Score>>>()?
+                    .into_iter()
+                    .fold(0.0f32, f32::max);
+                let q = PhraseQuery::new(terms);
+                clauses.push((
+                    Occur::Should,
+                    Box::new(ConstScoreQuery::new(Box::new(q), max_idf)),
+                ));
             };
-            clauses.push((Occur::Should, Box::new(BoostQuery::new(q, 2.0))));
         }
 
         // Build unigram clauses for isolated Han characters
         for term_text in &unigram_terms {
             let term = Term::from_field_text(fields.unigram, term_text);
+            let doc_freq = searcher.doc_freq(&term)?;
+            let idf = compute_idf(doc_freq, total_num_docs);
             clauses.push((
                 Occur::Should,
-                Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
+                Box::new(ConstScoreQuery::new(
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
+                    idf,
+                )),
             ));
         }
 
-        // Build diacritic clauses (boosted 3x)
+        // Build diacritic clauses (boosted 1.5x relative to IDF)
         for term_text in &diacritic_terms {
             let term = Term::from_field_text(fields.diacritic, term_text);
+            let doc_freq = searcher.doc_freq(&term)?;
+            let idf = compute_idf(doc_freq, total_num_docs);
             clauses.push((
                 Occur::Should,
-                Box::new(BoostQuery::new(
+                Box::new(ConstScoreQuery::new(
                     Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
-                    3.0,
+                    idf * DIACRITIC_BOOST,
                 )),
             ));
         }

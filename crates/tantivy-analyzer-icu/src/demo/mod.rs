@@ -58,12 +58,12 @@ pub fn run_all_tests() -> tantivy::Result<bool> {
 
     let mut all_ok = true;
 
-    all_ok &= run_automated_tests(&searcher, &config, &index, &fields)?;
-    all_ok &= run_very_long_query_test(&searcher, &config, &index, &fields)?;
-    all_ok &= run_long_doc_snippet_tests(&searcher, &config, &index, &fields)?;
-    all_ok &= run_property_tests(&searcher, &config, &index, &fields)?;
+    all_ok &= run_automated_tests(&searcher, &config, &fields)?;
+    all_ok &= run_very_long_query_test(&searcher, &config, &fields)?;
+    all_ok &= run_long_doc_snippet_tests(&searcher, &config, &fields)?;
+    all_ok &= run_property_tests(&searcher, &config, &fields)?;
     all_ok &= run_phrase_tests(&searcher, &fields)?;
-    all_ok &= run_score_tests(&searcher, &config, &index, &fields)?;
+    all_ok &= run_score_tests(&searcher, &config, &fields)?;
 
     Ok(all_ok)
 }

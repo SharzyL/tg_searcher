@@ -426,7 +426,7 @@ fn bench_icu(
         let mut hit_count = 0;
         for _ in 0..QUERY_ITERATIONS {
             let start = Instant::now();
-            let query = icu.route_query(&index, &content, q).unwrap();
+            let query = icu.route_query(&searcher, &content, q).unwrap();
             let count = searcher.search(&*query, &Count).unwrap();
             latencies.push(start.elapsed());
             hit_count = count;
