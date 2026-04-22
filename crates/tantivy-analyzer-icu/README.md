@@ -128,7 +128,7 @@ CJKBigramFilter
 
 ### Worked Example
 
-Input: `㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで挨拶した。8月10日、二 人 幸 终。`
+Input: `㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで先輩に挨拶した。8月10日、二 人 幸 终。`
 
 (`\u{E0100}` is an ideographic variation selector, invisible in rendered text)
 
@@ -149,9 +149,9 @@ Step 3 — CJK unigram expansion:
 
   [令] [和] [ξ] [明] [治] [株] [式] [会] [社] [の] [下] [北] [沢] [店] [で]
   [naïve] [な] [thé] [noir] [と] [phở] [と] [كَبَاب] [を] [注] [文]
-  [שָׁלוֹם] [と] [नमस्ते] [で] [挨] [拶] [し] [た]
-  [8] [月] [10] [日] [二] [人] [幸] [终]
-                      ↑、↑ ↑空↑ ↑空↑ ↑空↑
+  [שָׁלוֹם] [と] [नमस्ते] [で] [先] [輩] [に] [挨] [拶] [し] [た]
+  [8] [月] [10] [日] | [二] | [人] | [幸] | [终]
+  (| = offset gap from 、or space in original text)
 
 Step 4 — SemiticNormalizationFilter:
   [كَبَاب]→[كباب]  harakat stripped
@@ -171,14 +171,14 @@ Step 6 — terminal filters (three parallel paths):
 → folded_bigram (CJKBigramFilter):
   [令和] [ξ] [明治] [治株] [株式] [式会] [会社] [社の] [の下] [下北] [北沢] [沢店] [店で]
   [naive] [な] [the] [noir] [と] [pho] [と] [كباب] [を注] [注文]
-  [שלום] [と] [नमस्ते] [で挨] [挨拶] [拶し] [した]
+  [שלום] [と] [नमस्ते] [で先] [先輩] [輩に] [に挨] [挨拶] [拶し] [した]
   [8] [10]
   (月, 日 dropped — isolated Han between numbers;
    二, 人, 幸, 终 dropped — isolated Han separated by spaces)
 
 → unigram (HanOnlyFilter):
   [令] [和] [明] [治] [株] [式] [会] [社] [下] [北] [沢] [店]
-  [注] [文] [挨] [拶] [月] [日] [二] [人] [幸] [终]
+  [注] [文] [先] [輩] [挨] [拶] [月] [日] [二] [人] [幸] [终]
 
 → diacritic (DiacriticOnlyFilter, pre-fold form):
   [naïve] [thé] [phở]

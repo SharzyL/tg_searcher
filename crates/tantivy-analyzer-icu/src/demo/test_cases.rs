@@ -1,4 +1,4 @@
-pub const DEMO_SENTENCE: &str = "㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで挨拶した。8月10日、二 人 幸 终。";
+pub const DEMO_SENTENCE: &str = "㋿Ξ㍾㍿の下北沢\u{E0100}店でnaïveなThé Noirとphởとكَبَابを注文、שָׁלוֹםとनमस्तेで先輩に挨拶した。8月10日、二 人 幸 终。";
 
 pub const TEST_DOCUMENTS: &[(&str, &str)] = &[
     // === Demo sentence (README worked example) ===
