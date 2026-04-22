@@ -22,3 +22,5 @@ jobs:
           nix build
           nix flake check
           nix develop -c cargo clippy -- -D warnings
+          nix develop -c cargo test
+          nix develop -c cargo test -p tantivy-analyzer-icu --features demo

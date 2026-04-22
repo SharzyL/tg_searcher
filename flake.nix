@@ -47,7 +47,7 @@
             icu
           ];
 
-          cargoHash = "sha256-3dShJ1fU+uZOMjrd34vZYGRmJLOcF5ppKPBPRfdWd70=";
+          cargoHash = "sha256-AYr8Si8LPuImNGWyMzWsnS6V1DqlJ1mlTa86P13WfWQ=";
           meta.mainProgram = name;
         };
 
