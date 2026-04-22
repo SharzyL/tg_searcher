@@ -2,9 +2,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use crate::search::ICUSearchConfig;
-use tantivy::query::PhraseQuery;
-use tantivy::schema::IndexRecordOption;
-use tantivy::{Index, IndexWriter, Result, Searcher, Term};
+use tantivy::{Index, IndexWriter, Result, Searcher};
 
 use super::search::{DemoFields, SearchHit, search_with_snippets};
 use super::test_cases::{QUERY_TEST_GROUPS, QueryTestGroup};
@@ -142,7 +140,7 @@ fn print_group_docs(group: &QueryTestGroup) {
 }
 
 /// Create an in-RAM index with the given group's documents.
-fn create_group_index(
+pub fn create_group_index(
     config: &ICUSearchConfig,
     group: &QueryTestGroup,
 ) -> Result<(Index, DemoFields)> {
@@ -197,7 +195,17 @@ pub fn run_group_tests(config: &ICUSearchConfig) -> Result<bool> {
             let query_debug = format!("{:?}", query);
             let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
             let hit_ids: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
-            let expected: HashSet<&str> = case.matches.iter().copied().collect();
+
+            // Separate plain doc IDs from ordering constraints ("a > b")
+            let mut expected: HashSet<&str> = HashSet::new();
+            let mut ordering_constraints: Vec<(&str, &str)> = Vec::new();
+            for entry in case.matches {
+                if let Some((left, right)) = entry.split_once(" > ") {
+                    ordering_constraints.push((left.trim(), right.trim()));
+                } else {
+                    expected.insert(entry);
+                }
+            }
 
             let mut errors = Vec::new();
 
@@ -209,6 +217,26 @@ pub fn run_group_tests(config: &ICUSearchConfig) -> Result<bool> {
             for id in &hit_ids {
                 if !expected.contains(id.as_str()) {
                     errors.push(format!("unexpected hit: {id}"));
+                }
+            }
+
+            // Verify ordering constraints: "a > b" means a must have score >= b
+            for (higher, lower) in &ordering_constraints {
+                let h_score = hits.iter().find(|h| h.id == *higher).map(|h| h.score);
+                let l_score = hits.iter().find(|h| h.id == *lower).map(|h| h.score);
+                match (h_score, l_score) {
+                    (Some(hs), Some(ls)) if hs < ls => {
+                        errors.push(format!(
+                            "ordering violated: {higher} ({hs:.3}) < {lower} ({ls:.3})"
+                        ));
+                    }
+                    (None, _) => {
+                        errors.push(format!("ordering: {higher} not found in hits"));
+                    }
+                    (_, None) => {
+                        errors.push(format!("ordering: {lower} not found in hits"));
+                    }
+                    _ => {}
                 }
             }
 
@@ -325,334 +353,6 @@ pub fn run_group_tests(config: &ICUSearchConfig) -> Result<bool> {
     }
 
     Ok(all_failed.is_empty())
-}
-
-/// Run the very_long_query stress test.
-pub fn run_very_long_query_test(config: &ICUSearchConfig) -> Result<bool> {
-    println!("\n=== Very Long Query Test ===");
-
-    // Need a minimal index to run a query against
-    let group = &QUERY_TEST_GROUPS[0]; // any non-empty group
-    let (index, fields) = create_group_index(config, group)?;
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    let query_text = super::test_cases::very_long_query();
-    let query = config.route_query(&searcher, &fields.icu, &query_text)?;
-    let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
-    println!(
-        "PASS [very_long_query] 1000x'北': {} hits returned",
-        hits.len()
-    );
-    println!();
-    Ok(true)
-}
-
-/// Run long document snippet tests.
-pub fn run_long_doc_snippet_tests(config: &ICUSearchConfig) -> Result<bool> {
-    println!("=== Long Document Snippet Tests ===");
-    let mut ok = true;
-
-    // Find the group containing long-1
-    let group = QUERY_TEST_GROUPS
-        .iter()
-        .find(|g| g.docs.iter().any(|(id, _)| *id == "long-1"))
-        .expect("No group contains long-1 document");
-    let (index, fields) = create_group_index(config, group)?;
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    let query = config.route_query(&searcher, &fields.icu, "北京")?;
-    let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 100)?;
-
-    let long_hit = hits.iter().find(|h| h.id == "long-1");
-    if let Some(hit) = long_hit {
-        let frag = &hit.snippet_fragment;
-        if frag.len() < hit.body.len() {
-            println!(
-                "PASS [long_doc_snippet_window] snippet ({} bytes) < body ({} bytes)",
-                frag.len(),
-                hit.body.len()
-            );
-        } else {
-            println!(
-                "FAIL [long_doc_snippet_window] snippet ({} bytes) >= body ({} bytes)",
-                frag.len(),
-                hit.body.len()
-            );
-            ok = false;
-        }
-        if frag.len() < 1000 {
-            println!(
-                "PASS [long_doc_snippet_bounded] snippet {} bytes < 1000",
-                frag.len()
-            );
-        } else {
-            println!(
-                "FAIL [long_doc_snippet_bounded] snippet {} bytes >= 1000",
-                frag.len()
-            );
-            ok = false;
-        }
-        if frag.contains("北京") {
-            println!("PASS [long_doc_snippet_contains] snippet contains 北京");
-        } else {
-            println!("FAIL [long_doc_snippet_contains] snippet missing 北京");
-            ok = false;
-        }
-    } else {
-        println!("FAIL [long_doc_hit] long-1 not found in results");
-        ok = false;
-    }
-
-    println!();
-    Ok(ok)
-}
-
-/// Run property-based tests using a fixed set of adversarial inputs.
-pub fn run_property_tests(config: &ICUSearchConfig) -> Result<bool> {
-    println!("=== Property Tests ===");
-    let mut ok = true;
-
-    // Use the first non-empty group for a representative index
-    let group = QUERY_TEST_GROUPS
-        .iter()
-        .find(|g| !g.docs.is_empty())
-        .expect("No non-empty group");
-    let (index, fields) = create_group_index(config, group)?;
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    let adversarial_inputs: &[&str] = &[
-        "",
-        " ",
-        "   \t\n  ",
-        "a",
-        "我",
-        "🎉",
-        "hello world",
-        "㋿Ξ㍾㍿",
-        "𠮷野家",
-        "\u{200B}\u{FEFF}\u{200D}",
-        "\u{E0100}\u{E0101}",
-        "!!!???。。。",
-        "a\u{0301}\u{0320}",
-        "か\u{3099}",
-        "\u{110B}\u{1161}\u{11AB}",
-        "Hello 你好 World 🎉 안녕 ありがとう",
-        "葛\u{E0100}飾",
-        "café résumé naïve",
-        "Straße İstanbul Ξένος",
-        "㐀㐁㐂",
-        "𠀀𠁀𠂀",
-        "A我B你C",
-        "い안あ한",
-        "北京 在 东京",
-        "北京，东京。大阪！",
-        &"あ".repeat(200),
-        &"𠮷".repeat(50),
-        &"Hello 你好 ".repeat(20),
-        "👨\u{200D}👩\u{200D}👧\u{200D}👦 family",
-        "🏳️\u{200D}🌈",
-        "\0\u{0001}\u{007F}", // control chars
-        "a b c d e f g h i j k l m n o p q r s t u v w x y z",
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-    ];
-
-    for (i, input) in adversarial_inputs.iter().enumerate() {
-        let query = match config.route_query(&searcher, &fields.icu, input) {
-            Ok(q) => q,
-            Err(e) => {
-                println!(
-                    "  [prop-{i}] parse error on {:?}: {} (OK)",
-                    escape_invisible(input),
-                    e
-                );
-                continue;
-            }
-        };
-
-        let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
-
-        for hit in &hits {
-            let frag = &hit.snippet_fragment;
-            for range in &hit.highlighted_ranges {
-                if range.start > frag.len() || range.end > frag.len() {
-                    println!(
-                        "FAIL [prop-{i}] range {:?} out of bounds for fragment len {}",
-                        range,
-                        frag.len()
-                    );
-                    ok = false;
-                    continue;
-                }
-                if !frag.is_char_boundary(range.start) || !frag.is_char_boundary(range.end) {
-                    println!(
-                        "FAIL [prop-{i}] range {:?} not at char boundary in {:?}",
-                        range, hit.id
-                    );
-                    ok = false;
-                    continue;
-                }
-                let _ = &frag[range.start..range.end];
-            }
-        }
-
-        let hits2 = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
-        if hits.len() != hits2.len() {
-            println!(
-                "FAIL [prop-{i}] non-deterministic: {} vs {} hits",
-                hits.len(),
-                hits2.len()
-            );
-            ok = false;
-        } else {
-            for (a, b) in hits.iter().zip(hits2.iter()) {
-                if a.id != b.id || (a.score - b.score).abs() > f32::EPSILON {
-                    println!("FAIL [prop-{i}] non-deterministic results");
-                    ok = false;
-                    break;
-                }
-            }
-        }
-    }
-
-    if ok {
-        println!(
-            "PASS [property_tests] all {} inputs OK",
-            adversarial_inputs.len()
-        );
-    }
-
-    println!();
-    Ok(ok)
-}
-
-/// Run PhraseQuery tests on the bigram field.
-pub fn run_phrase_tests(config: &ICUSearchConfig) -> Result<bool> {
-    println!("=== PhraseQuery Tests ===");
-    let mut ok = true;
-
-    // Phrase tests need zh-1, zh-2, zh-3, demo-1
-    let group = QUERY_TEST_GROUPS
-        .iter()
-        .find(|g| g.docs.iter().any(|(id, _)| *id == "zh-1"))
-        .expect("No group contains zh-1");
-    let (index, fields) = create_group_index(config, group)?;
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    let schema = searcher.schema();
-    let bigram_entry = schema.get_field_entry(fields.icu.folded_bigram);
-    let has_positions = bigram_entry
-        .field_type()
-        .get_index_record_option()
-        .is_some_and(|opt| matches!(opt, IndexRecordOption::WithFreqsAndPositions));
-    if !has_positions {
-        println!("SKIP [phrase_tests] body_bigram field does not have positions");
-        println!();
-        return Ok(true);
-    }
-
-    struct PhraseTest {
-        name: &'static str,
-        terms: &'static [&'static str],
-        must_match: &'static [&'static str],
-        must_not_match: &'static [&'static str],
-        description: &'static str,
-    }
-
-    let phrase_tests = &[
-        PhraseTest {
-            name: "phrase_beijing_tianan",
-            terms: &["北京", "京天", "天安"],
-            must_match: &["zh-1"],
-            must_not_match: &["zh-2", "zh-3"],
-            description: "Consecutive bigrams in zh-1 我爱北京天安门",
-        },
-        PhraseTest {
-            name: "phrase_reiwa_meiji",
-            terms: &["令和", "和ξ"],
-            must_match: &[],
-            must_not_match: &["demo-1"],
-            description: "No cross CJK/non-CJK bigram boundary",
-        },
-    ];
-
-    for test in phrase_tests {
-        let terms: Vec<Term> = test
-            .terms
-            .iter()
-            .map(|t| Term::from_field_text(fields.icu.folded_bigram, t))
-            .collect();
-        let phrase_query = PhraseQuery::new(terms);
-
-        let hits = search_with_snippets(&searcher, &phrase_query, &fields, 100)?;
-        let hit_ids: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
-
-        let mut errors = Vec::new();
-        for required in test.must_match {
-            if !hit_ids.contains(*required) {
-                errors.push(format!("missing: {required}"));
-            }
-        }
-        for forbidden in test.must_not_match {
-            if hit_ids.contains(*forbidden) {
-                errors.push(format!("unexpected: {forbidden}"));
-            }
-        }
-
-        if errors.is_empty() {
-            println!(
-                "PASS [{}] phrase={:?} hits={:?}",
-                test.name,
-                test.terms,
-                hit_ids.iter().collect::<Vec<_>>()
-            );
-        } else {
-            println!("FAIL [{}] phrase={:?}", test.name, test.terms);
-            println!("  description: {}", test.description);
-            println!("  actual hits: {:?}", hit_ids.iter().collect::<Vec<_>>());
-            for err in &errors {
-                println!("  !! {err}");
-            }
-            ok = false;
-        }
-    }
-
-    println!();
-    Ok(ok)
-}
-
-/// Run score-specific tests.
-pub fn run_score_tests(config: &ICUSearchConfig) -> Result<bool> {
-    println!("=== Score Tests ===");
-    let mut ok = true;
-
-    // Need a group with zh-6 ("我")
-    let group = QUERY_TEST_GROUPS
-        .iter()
-        .find(|g| g.docs.iter().any(|(id, _)| *id == "zh-6"))
-        .expect("No group contains zh-6");
-    let (index, fields) = create_group_index(config, group)?;
-    let reader = index.reader()?;
-    let searcher = reader.searcher();
-
-    // exact_doc_ranks_high: "我" query, zh-6 (just "我") should be in top 3
-    {
-        let query = config.route_query(&searcher, &fields.icu, "我")?;
-        let hits = search_with_snippets(&searcher, query.as_ref(), &fields, 10)?;
-        let top3: Vec<&str> = hits.iter().take(3).map(|h| h.id.as_str()).collect();
-        if top3.contains(&"zh-6") {
-            println!("PASS [exact_doc_ranks_high] zh-6 in top 3: {:?}", top3);
-        } else {
-            println!("FAIL [exact_doc_ranks_high] zh-6 not in top 3: {:?}", top3);
-            ok = false;
-        }
-    }
-
-    println!();
-    Ok(ok)
 }
 
 pub fn interactive_mode(

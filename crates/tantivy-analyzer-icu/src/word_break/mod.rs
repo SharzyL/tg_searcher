@@ -116,7 +116,7 @@ pub fn icu_word_break(text: &str) -> Vec<(usize, usize)> {
 mod tests {
     use super::*;
 
-    fn break_texts<'a>(text: &'a str) -> Vec<&'a str> {
+    fn break_texts(text: &str) -> Vec<&str> {
         icu_word_break(text)
             .iter()
             .map(|&(s, e)| &text[s..e])
