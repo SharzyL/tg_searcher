@@ -1,0 +1,22 @@
+[package]
+name = "tg-searcher-index"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.42", features = ["serde"] }
+html-escape = "0.2.13"
+jieba-rs = "0.8.1"
+rand = "0.9.2"
+serde = { version = "1.0.228", features = ["derive"] }
+tantivy = { version = "0.26", default-features = false, features = ["mmap", "lz4-compression", "zstd-compression", "columnar-zstd-compression"] }
+thiserror = "2.0.17"
+tokio = { version = "1.49.0", features = ["fs"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+clap = { version = "4.5.54", features = ["derive"] }
+serde_json = "1.0"
+tantivy-analyzer-icu = { path = "../tantivy-analyzer-icu", features = ["tantivy-search"] }
+tempfile = "3.24.0"
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "test-util"] }

@@ -74,6 +74,20 @@ impl<S: TokenStream> TokenStream for DiacriticFoldingTokenStream<S> {
     }
 }
 
+/// Fold foldable diacritics: NFD → strip foldable marks → NFC.
+///
+/// Returns a new string with foldable diacritics removed. Returns the input
+/// unchanged if there are no foldable diacritics.
+pub fn fold_diacritics(text: &str) -> String {
+    if text.is_ascii() || !text.nfd().any(is_foldable_diacritic) {
+        return text.to_string();
+    }
+    text.nfd()
+        .filter(|c| !is_foldable_diacritic(*c))
+        .nfc()
+        .collect()
+}
+
 /// Fold foldable diacritics in place: NFD → strip foldable marks → NFC.
 fn fold_diacritics_in_place(text: &mut String) {
     // Fast path: ASCII-only strings never have diacritics.

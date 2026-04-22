@@ -12,9 +12,8 @@ const DOWNLOAD_BATCH_SIZE: usize = 1000;
 const FETCH_PROGRESS_BATCH_SIZE: usize = 100;
 
 use crate::config::BackendConfig;
-use crate::indexer::Indexer;
 use crate::session::ClientSession;
-use crate::types::{DownloadProgress, DownloadResult, IndexMsg, Result, SearchResult};
+use crate::types::{DownloadProgress, DownloadResult, Result};
 use crate::utils::{brief_content, escape_content, get_share_id};
 use dashmap::DashMap;
 use grammers_client::Client;
@@ -24,6 +23,7 @@ use grammers_client::types::update::{MessageDeletion, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use std::collections::HashSet;
 use std::sync::Arc;
+use tg_searcher_index::{IndexMsg, Indexer, SearchResult};
 use tracing::{debug, error, info, warn};
 
 /// Backend bot for indexing messages
@@ -224,12 +224,15 @@ impl BackendBot {
         page_len: usize,
         page_num: usize,
     ) -> Result<SearchResult> {
-        self.indexer.search(query, chats, page_len, page_num).await
+        Ok(self
+            .indexer
+            .search(query, chats, page_len, page_num)
+            .await?)
     }
 
     /// Get a random message
     pub async fn rand_msg(&self) -> Result<Option<IndexMsg>> {
-        self.indexer.retrieve_random_document().await
+        Ok(self.indexer.retrieve_random_document().await?)
     }
 
     /// Get the client, returning an error if not initialized

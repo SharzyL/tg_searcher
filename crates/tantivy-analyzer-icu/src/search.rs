@@ -33,7 +33,7 @@
 
 use std::ops::Range;
 
-use tantivy::query::{BooleanQuery, BoostQuery, EmptyQuery, Occur, Query, QueryParser, TermQuery};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
 use tantivy::schema::{
     Field, IndexRecordOption, STORED, SchemaBuilder, TextFieldIndexing, TextOptions,
 };
@@ -42,7 +42,9 @@ use tantivy::tokenizer::TextAnalyzer;
 use tantivy::{Index, Searcher, Term};
 use tantivy_tokenizer_api::{Token, TokenStream};
 
-use crate::filter::{find_isolated_han_tokens, has_foldable_diacritic};
+use crate::filter::{
+    ScriptGroup, fold_diacritics, is_foldable_diacritic, is_han_char, token_script_group,
+};
 use crate::{
     CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter, HanOnlyFilter,
     NormalizingICUTokenizer, SemiticNormalizationFilter,
@@ -178,58 +180,78 @@ impl ICUSearchConfig {
 
     /// Route a query for the given field group (smartcase).
     ///
-    /// Analyzes the query text and dispatches to appropriate fields:
+    /// Tokenizes the query text once, then builds term queries for all three
+    /// fields without going through `QueryParser`:
     /// - Adjacent CJK characters → folded_bigram field (boosted 2x)
-    /// - Isolated Han characters → manual unigram TermQueries
+    /// - Isolated Han characters → unigram field TermQueries
     /// - Non-CJK text → folded_bigram field passthrough
     /// - If the query contains foldable diacritics → also diacritic field (boosted 3x)
     pub fn route_query(
         &self,
-        index: &Index,
+        _index: &Index,
         fields: &ICUFieldGroup,
         query_text: &str,
     ) -> tantivy::Result<Box<dyn Query>> {
-        let base_tokens = self.base_tokenize(query_text);
-        let isolated_han = find_isolated_han_tokens(&base_tokens);
-        let query_has_diacritic = has_foldable_diacritic(query_text);
+        // Single tokenization pass: NormalizingICUTokenizer → SemiticNorm
+        let semitic_tokens = self.semitic_tokenize(query_text);
 
-        // folded_bigram clause (always present)
-        let folded_bigram_parser = QueryParser::for_index(index, vec![fields.folded_bigram]);
-        // The parser may return AllButQueryForbidden when the bigram analyzer
-        // drops all tokens (e.g. "京 东" where both are isolated Han).
-        let folded_bigram_q: Box<dyn Query> = folded_bigram_parser
-            .parse_query(query_text)
-            .unwrap_or_else(|_| Box::new(EmptyQuery));
+        // Derive all three term sets from the semitic-normalized tokens:
+        let QueryTerms {
+            folded_bigram_groups,
+            unigram_terms,
+            diacritic_terms,
+        } = Self::derive_query_terms(&semitic_tokens);
 
-        let needs_multi_field = !isolated_han.is_empty() || query_has_diacritic;
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
 
-        if !needs_multi_field {
-            return Ok(Box::new(BoostQuery::new(folded_bigram_q, 2.0)));
+        // Build folded_bigram clauses (boosted 2x).
+        // Each group is either a single term or a phrase (from a CJK bigram run).
+        for group in &folded_bigram_groups {
+            let q: Box<dyn Query> = if group.len() == 1 {
+                Box::new(TermQuery::new(
+                    Term::from_field_text(fields.folded_bigram, &group[0]),
+                    IndexRecordOption::WithFreqsAndPositions,
+                ))
+            } else {
+                // Multi-bigram run → PhraseQuery to match the exact sequence
+                let terms: Vec<Term> = group
+                    .iter()
+                    .map(|t| Term::from_field_text(fields.folded_bigram, t))
+                    .collect();
+                Box::new(PhraseQuery::new(terms))
+            };
+            clauses.push((Occur::Should, Box::new(BoostQuery::new(q, 2.0))));
         }
 
-        let mut clauses: Vec<(Occur, Box<dyn Query>)> = vec![(
-            Occur::Should,
-            Box::new(BoostQuery::new(folded_bigram_q, 2.0)),
-        )];
-
-        // Unigram clauses for isolated Han characters
-        for han_text in &isolated_han {
-            let term = Term::from_field_text(fields.unigram, han_text);
+        // Build unigram clauses for isolated Han characters
+        for term_text in &unigram_terms {
+            let term = Term::from_field_text(fields.unigram, term_text);
             clauses.push((
                 Occur::Should,
                 Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
             ));
         }
 
-        // Diacritic clause: only when query contains foldable diacritics
-        if query_has_diacritic {
-            let diacritic_parser = QueryParser::for_index(index, vec![fields.diacritic]);
-            if let Ok(dq) = diacritic_parser.parse_query(query_text) {
-                clauses.push((Occur::Should, Box::new(BoostQuery::new(dq, 3.0))));
-            }
+        // Build diacritic clauses (boosted 3x)
+        for term_text in &diacritic_terms {
+            let term = Term::from_field_text(fields.diacritic, term_text);
+            clauses.push((
+                Occur::Should,
+                Box::new(BoostQuery::new(
+                    Box::new(TermQuery::new(term, IndexRecordOption::WithFreqs)),
+                    3.0,
+                )),
+            ));
         }
 
-        Ok(Box::new(BooleanQuery::new(clauses)))
+        if clauses.is_empty() {
+            Ok(Box::new(BooleanQuery::new(vec![])))
+        } else if clauses.len() == 1 {
+            let (_, query) = clauses.pop().unwrap();
+            Ok(query)
+        } else {
+            Ok(Box::new(BooleanQuery::new(clauses)))
+        }
     }
 
     /// Generate a snippet with three-field fallback and highlight merging.
@@ -338,11 +360,14 @@ impl ICUSearchConfig {
         }
     }
 
-    /// Tokenize text with the base analyzer (SemiticNorm + DiacriticFolding, no CJK filters).
-    fn base_tokenize(&self, text: &str) -> Vec<Token> {
+    /// Tokenize text with NormalizingICUTokenizer + SemiticNorm only (no diacritic folding).
+    ///
+    /// This is the single tokenization pass used by `route_query`. The returned
+    /// tokens are at the "semitic-normalized" stage — DiacriticFolding and
+    /// CJK bigram/unigram/diacritic-only filters have NOT been applied yet.
+    fn semitic_tokenize(&self, text: &str) -> Vec<Token> {
         let mut analyzer = TextAnalyzer::builder(NormalizingICUTokenizer)
             .filter(SemiticNormalizationFilter)
-            .filter(DiacriticFoldingFilter)
             .build();
         let mut stream = analyzer.token_stream(text);
         let mut tokens = Vec::new();
@@ -351,4 +376,94 @@ impl ICUSearchConfig {
         }
         tokens
     }
+
+    /// Derive all three sets of query terms from semitic-normalized tokens.
+    ///
+    /// This replicates the logic of the three analyzer pipelines
+    /// (folded_bigram, unigram, diacritic) without re-tokenizing:
+    ///
+    /// - **folded_bigram**: fold diacritics → CJK bigram (non-CJK pass through,
+    ///   isolated Han dropped). Each CJK bigram run produces a phrase group.
+    /// - **unigram**: fold diacritics → isolated Han characters only
+    /// - **diacritic**: pre-fold tokens that contain foldable diacritics
+    fn derive_query_terms(semitic_tokens: &[Token]) -> QueryTerms {
+        // Step 1: fold diacritics on each token
+        let folded: Vec<String> = semitic_tokens
+            .iter()
+            .map(|t| fold_diacritics(&t.text))
+            .collect();
+
+        // Step 2: CJK bigram logic on folded tokens (replicates CJKBigramFilter).
+        // Each entry in folded_bigram_groups is either:
+        //   - a single-element vec (non-CJK term or isolated kana/hangul)
+        //   - a multi-element vec (bigrams from a contiguous CJK run → PhraseQuery)
+        let mut folded_bigram_groups: Vec<Vec<String>> = Vec::new();
+        let mut unigram_terms = Vec::new();
+        let mut i = 0;
+        let len = folded.len();
+
+        while i < len {
+            let script = token_script_group(&folded[i]);
+
+            if script == ScriptGroup::NonCjk {
+                folded_bigram_groups.push(vec![folded[i].clone()]);
+                i += 1;
+                continue;
+            }
+
+            // Collect a run of same-group, offset-adjacent CJK tokens
+            let run_start = i;
+            i += 1;
+            while i < len
+                && token_script_group(&folded[i]) == script
+                && semitic_tokens[i].offset_from <= semitic_tokens[i - 1].offset_to
+            {
+                i += 1;
+            }
+            let run_len = i - run_start;
+
+            if run_len == 1 {
+                let c = folded[run_start].chars().next();
+                if c.is_some_and(is_han_char) {
+                    unigram_terms.push(folded[run_start].clone());
+                } else {
+                    folded_bigram_groups.push(vec![folded[run_start].clone()]);
+                }
+                continue;
+            }
+
+            // Multi-token CJK run → overlapping bigrams as a phrase group
+            let bigrams: Vec<String> = (run_start..run_start + run_len - 1)
+                .map(|j| format!("{}{}", folded[j], folded[j + 1]))
+                .collect();
+            folded_bigram_groups.push(bigrams);
+        }
+
+        // Step 3: diacritic terms (pre-fold tokens with foldable diacritics)
+        let diacritic_terms: Vec<String> = semitic_tokens
+            .iter()
+            .filter(|t| {
+                use unicode_normalization::UnicodeNormalization;
+                t.text.nfd().any(is_foldable_diacritic)
+            })
+            .map(|t| t.text.clone())
+            .collect();
+
+        QueryTerms {
+            folded_bigram_groups,
+            unigram_terms,
+            diacritic_terms,
+        }
+    }
+}
+
+/// The three sets of query terms derived from a single tokenization pass.
+struct QueryTerms {
+    /// Term groups for the folded_bigram field. Each group is either a single term
+    /// (non-CJK or isolated kana/hangul) or a phrase of bigrams (contiguous CJK run).
+    folded_bigram_groups: Vec<Vec<String>>,
+    /// Terms for the unigram field (isolated Han characters).
+    unigram_terms: Vec<String>,
+    /// Terms for the diacritic field (pre-fold tokens with foldable diacritics).
+    diacritic_terms: Vec<String>,
 }

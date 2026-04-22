@@ -2838,6 +2838,7 @@ dependencies = [
  "typetag",
  "uuid",
  "winapi",
+ "zstd",
 ]
 
 [[package]]
@@ -2987,21 +2988,37 @@ dependencies = [
  "grammers-session",
  "grammers-tl-types",
  "html-escape",
- "jieba-rs",
  "nix 0.31.2",
- "rand 0.9.2",
  "rpassword",
  "serde",
  "serde_yaml",
  "shell-words",
- "tantivy",
- "tantivy-analyzer-icu",
  "tempfile",
+ "tg-searcher-index",
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "tg-searcher-index"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "html-escape",
+ "jieba-rs",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "tantivy",
+ "tantivy-analyzer-icu",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

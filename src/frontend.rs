@@ -11,7 +11,7 @@ use crate::backend::BackendBot;
 use crate::config::{BotFrontendConfig, FrontendConfig};
 use crate::session::ClientSession;
 use crate::storage::Storage;
-use crate::types::{Result, SearchResult};
+use crate::types::Result;
 use crate::utils::MessageBuilder;
 use crate::utils::remove_first_word;
 use grammers_client::client::UpdatesConfiguration;
@@ -22,6 +22,7 @@ use grammers_session::defs::{PeerId, PeerKind};
 use grammers_tl_types as tl;
 use std::sync::Arc;
 use std::time::Instant;
+use tg_searcher_index::SearchResult;
 use tracing::{debug, error, info, warn};
 
 /// Callback data for disabled/non-interactive buttons

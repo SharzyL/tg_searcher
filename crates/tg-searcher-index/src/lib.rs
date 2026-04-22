@@ -1,11 +1,16 @@
 //! Full-text search indexer using Tantivy with Chinese tokenization
 //!
-//! This module provides a wrapper around Tantivy for indexing and searching
+//! This crate provides a wrapper around Tantivy for indexing and searching
 //! Telegram messages with support for Chinese word segmentation via jieba.
+//!
+//! The schema includes hardcoded fields: `content`, `url`, `chat_id`,
+//! `post_time`, and `sender`.
 
-use crate::types::{Error, HighlightedSnippet, IndexMsg, Result, SearchHit, SearchResult};
+use chrono::{DateTime, Utc};
 use jieba_rs::Jieba;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -15,9 +20,80 @@ use tantivy::schema::*;
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term, doc};
+use thiserror::Error;
 use tracing::warn;
 
-/// Chinese tokenizer using jieba
+// ── Error type ──────────────────────────────────────────────────────
+
+/// Error type for index operations.
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Index error: {0}")]
+    Index(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Result type alias for index operations.
+pub type Result<T> = std::result::Result<T, Error>;
+
+// ── Types ───────────────────────────────────────────────────────────
+
+/// Message to be indexed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexMsg {
+    /// Message text content
+    pub content: String,
+
+    /// URL to the message (format: `https://t.me/c/{share_id}/{msg_id}`)
+    pub url: String,
+
+    /// Chat ID (normalized share_id)
+    pub chat_id: i64,
+
+    /// Message timestamp
+    pub post_time: DateTime<Utc>,
+
+    /// Sender's name
+    pub sender: String,
+}
+
+/// A text snippet with highlighted (matched) byte ranges.
+#[derive(Debug, Clone)]
+pub struct HighlightedSnippet {
+    /// The plain text fragment
+    pub fragment: String,
+    /// Byte ranges within `fragment` that should be highlighted (bold)
+    pub highlights: Vec<Range<usize>>,
+}
+
+/// Search result hit with highlighting.
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    /// The indexed message
+    pub msg: IndexMsg,
+
+    /// Snippet with highlight ranges
+    pub snippet: HighlightedSnippet,
+}
+
+/// Search results with pagination info.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    /// Search hits
+    pub hits: Vec<SearchHit>,
+
+    /// Whether this is the last page
+    pub is_last_page: bool,
+
+    /// Total number of results
+    pub total_results: usize,
+}
+
+// ── Chinese tokenizer ───────────────────────────────────────────────
+
+/// Chinese tokenizer using jieba.
 #[derive(Clone)]
 pub struct ChineseTokenizer {
     jieba: Arc<Jieba>,
@@ -31,6 +107,12 @@ impl ChineseTokenizer {
     }
 }
 
+impl Default for ChineseTokenizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Tokenizer for ChineseTokenizer {
     type TokenStream<'a> = ChineseTokenStream<'a>;
 
@@ -39,7 +121,7 @@ impl Tokenizer for ChineseTokenizer {
     }
 }
 
-/// Token stream for Chinese text
+/// Token stream for Chinese text.
 pub struct ChineseTokenStream<'a> {
     tokens: Vec<Token>,
     index: usize,
@@ -48,7 +130,6 @@ pub struct ChineseTokenStream<'a> {
 
 impl<'a> ChineseTokenStream<'a> {
     fn new(text: &'a str, jieba: Arc<Jieba>) -> Self {
-        // Use jieba to segment the text
         let words = jieba.cut(text, false);
         let mut tokens = Vec::new();
         let mut byte_offset = 0;
@@ -93,7 +174,9 @@ impl TokenStream for ChineseTokenStream<'_> {
     }
 }
 
-/// Indexer for full-text search
+// ── Indexer ─────────────────────────────────────────────────────────
+
+/// Full-text search indexer for Telegram messages.
 pub struct Indexer {
     index: Index,
     writer: Arc<RwLock<IndexWriter>>,
@@ -110,21 +193,17 @@ struct IndexFields {
 }
 
 impl Indexer {
-    /// Create or open an index
+    /// Create or open an index at the given directory.
     pub async fn new(index_dir: &Path, from_scratch: bool) -> Result<Self> {
-        // Create directory if it doesn't exist
         tokio::fs::create_dir_all(index_dir).await?;
 
-        // Build schema matching Python's Whoosh schema
         let schema = Self::build_schema();
 
-        // Clear index if requested
         if from_scratch && index_dir.join("meta.json").exists() {
             tokio::fs::remove_dir_all(index_dir).await?;
             tokio::fs::create_dir_all(index_dir).await?;
         }
 
-        // Open or create index
         let index = if index_dir.join("meta.json").exists() {
             Index::open_in_dir(index_dir).map_err(|e| Error::Index(e.to_string()))?
         } else {
@@ -132,17 +211,14 @@ impl Indexer {
                 .map_err(|e| Error::Index(e.to_string()))?
         };
 
-        // Register Chinese tokenizer
         index
             .tokenizers()
             .register("jieba", ChineseTokenizer::new());
 
-        // Create writer with 50MB heap
         let writer = index
             .writer(50_000_000)
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        // Create reader with auto-reload
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::OnCommitWithDelay)
@@ -165,11 +241,9 @@ impl Indexer {
         })
     }
 
-    /// Build Tantivy schema matching Python's Whoosh schema
     fn build_schema() -> Schema {
         let mut schema_builder = Schema::builder();
 
-        // content: TEXT with Chinese analyzer, stored
         let text_options = TextOptions::default()
             .set_indexing_options(
                 TextFieldIndexing::default()
@@ -179,25 +253,16 @@ impl Indexer {
             .set_stored();
         schema_builder.add_text_field("content", text_options);
 
-        // url: ID (STRING), stored, indexed (for unique lookups)
         schema_builder.add_text_field("url", STRING | STORED);
-
-        // chat_id: i64, stored, indexed (for filtering)
         schema_builder.add_i64_field("chat_id", INDEXED | STORED);
-
-        // post_time: DATETIME, stored, indexed, fast (for sorting)
-        schema_builder.add_date_field("post_time", INDEXED | STORED | FAST);
-
-        // sender: TEXT, stored
+        schema_builder.add_date_field("post_time", STORED | FAST);
         schema_builder.add_text_field("sender", STORED);
 
         schema_builder.build()
     }
 
-    /// Add a document to the index
+    /// Add a document to the index.
     pub async fn add_document(&self, msg: IndexMsg) -> Result<()> {
-        // Deduplicate by URL (Telegram message ID is encoded in the URL).
-        // Tantivy doesn't enforce uniqueness, so we explicitly delete any existing doc first.
         let url_term = Term::from_field_text(self.fields.url, &msg.url);
         let doc = doc!(
             self.fields.content => msg.content,
@@ -214,7 +279,6 @@ impl Indexer {
             .map_err(|e| Error::Index(e.to_string()))?;
         writer.commit().map_err(|e| Error::Index(e.to_string()))?;
 
-        // Reload reader to see changes
         self.reader
             .reload()
             .map_err(|e| Error::Index(e.to_string()))?;
@@ -222,7 +286,7 @@ impl Indexer {
         Ok(())
     }
 
-    /// Add multiple documents in batch (much faster than individual adds)
+    /// Add multiple documents in batch (much faster than individual adds).
     pub async fn add_documents_batch(&self, msgs: Vec<IndexMsg>) -> Result<()> {
         if msgs.is_empty() {
             return Ok(());
@@ -230,7 +294,6 @@ impl Indexer {
 
         let mut writer = self.writer.write().unwrap();
 
-        // Deduplicate by URL within the batch as well (keep the last occurrence).
         let mut by_url: HashMap<String, IndexMsg> = HashMap::new();
         for msg in msgs {
             by_url.insert(msg.url.clone(), msg);
@@ -250,10 +313,8 @@ impl Indexer {
                 .map_err(|e| Error::Index(e.to_string()))?;
         }
 
-        // Commit once for all documents
         writer.commit().map_err(|e| Error::Index(e.to_string()))?;
 
-        // Reload reader to see changes
         self.reader
             .reload()
             .map_err(|e| Error::Index(e.to_string()))?;
@@ -261,11 +322,10 @@ impl Indexer {
         Ok(())
     }
 
-    /// Update a document in the index
+    /// Update a document's content in the index.
     pub async fn update_document(&self, url: &str, content: &str) -> Result<()> {
         let searcher = self.reader.searcher();
 
-        // Find existing document by URL
         let url_term = Term::from_field_text(self.fields.url, url);
         let url_query = TermQuery::new(url_term.clone(), IndexRecordOption::Basic);
 
@@ -278,7 +338,6 @@ impl Indexer {
                 .doc(*doc_address)
                 .map_err(|e| Error::Index(e.to_string()))?;
 
-            // Extract existing fields
             let chat_id = doc
                 .get_first(self.fields.chat_id)
                 .and_then(|v| v.as_i64())
@@ -293,7 +352,6 @@ impl Indexer {
                 .unwrap_or("")
                 .to_string();
 
-            // Create updated document
             let updated_doc = doc!(
                 self.fields.content => content,
                 self.fields.url => url,
@@ -302,7 +360,6 @@ impl Indexer {
                 self.fields.sender => sender,
             );
 
-            // Delete old and add new
             let mut writer = self.writer.write().unwrap();
             writer.delete_term(url_term);
             writer
@@ -310,7 +367,6 @@ impl Indexer {
                 .map_err(|e| Error::Index(e.to_string()))?;
             writer.commit().map_err(|e| Error::Index(e.to_string()))?;
 
-            // Reload reader to see changes
             self.reader
                 .reload()
                 .map_err(|e| Error::Index(e.to_string()))?;
@@ -319,14 +375,13 @@ impl Indexer {
         Ok(())
     }
 
-    /// Delete a document from the index
+    /// Delete a document from the index.
     pub async fn delete_document(&self, url: &str) -> Result<()> {
         let term = Term::from_field_text(self.fields.url, url);
         let mut writer = self.writer.write().unwrap();
         writer.delete_term(term);
         writer.commit().map_err(|e| Error::Index(e.to_string()))?;
 
-        // Reload reader to see changes
         self.reader
             .reload()
             .map_err(|e| Error::Index(e.to_string()))?;
@@ -334,16 +389,14 @@ impl Indexer {
         Ok(())
     }
 
-    /// Delete all documents for a specific chat
+    /// Delete all documents for a specific chat.
     pub async fn delete_chat_documents(&self, chat_id: i64) -> Result<()> {
         let term = Term::from_field_i64(self.fields.chat_id, chat_id);
         let mut writer = self.writer.write().unwrap();
 
-        // Delete all documents matching this chat_id
         writer.delete_term(term);
         writer.commit().map_err(|e| Error::Index(e.to_string()))?;
 
-        // Reload reader to see changes
         self.reader
             .reload()
             .map_err(|e| Error::Index(e.to_string()))?;
@@ -351,7 +404,7 @@ impl Indexer {
         Ok(())
     }
 
-    /// Search the index
+    /// Search the index with optional chat filtering and pagination.
     pub async fn search(
         &self,
         query_str: &str,
@@ -361,13 +414,11 @@ impl Indexer {
     ) -> Result<SearchResult> {
         let searcher = self.reader.searcher();
 
-        // Parse query for content field
         let query_parser = QueryParser::for_index(&self.index, vec![self.fields.content]);
         let mut query = query_parser
             .parse_query(query_str)
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        // Add chat filter if specified
         if let Some(chats) = in_chats {
             let chat_queries: Vec<(Occur, Box<dyn Query>)> = chats
                 .iter()
@@ -381,7 +432,6 @@ impl Indexer {
 
             let chat_filter = BooleanQuery::new(chat_queries);
 
-            // Combine content query with chat filter
             let combined_query = BooleanQuery::new(vec![
                 (Occur::Must, Box::new(query)),
                 (Occur::Must, Box::new(chat_filter)),
@@ -389,10 +439,8 @@ impl Indexer {
             query = Box::new(combined_query);
         }
 
-        // Calculate offset
         let offset = (page_num - 1) * page_len;
 
-        // Search with sorting by post_time descending
         let collector = TopDocs::with_limit(page_len)
             .and_offset(offset)
             .order_by_fast_field::<tantivy::DateTime>("post_time", tantivy::Order::Desc);
@@ -401,7 +449,6 @@ impl Indexer {
             .search(&query, &collector)
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        // Get total count
         let count_collector = tantivy::collector::Count;
         let total_results = searcher
             .search(&query, &count_collector)
@@ -412,15 +459,12 @@ impl Indexer {
                 .map_err(|e| Error::Index(e.to_string()))?;
         snippet_generator.set_max_num_chars(100);
 
-        // Convert results to SearchHits
         let mut hits = Vec::new();
         for (_score, doc_address) in top_docs {
             let doc: tantivy::TantivyDocument = searcher
                 .doc(doc_address)
                 .map_err(|e| Error::Index(e.to_string()))?;
 
-            // Extract fields. Decode HTML entities — the old Python indexer stored
-            // HTML-encoded text (e.g. &amp; for &).
             let content = html_escape::decode_html_entities(
                 doc.get_first(self.fields.content)
                     .and_then(|v| v.as_str())
@@ -449,8 +493,6 @@ impl Indexer {
                 .unwrap_or("")
                 .to_string();
 
-            // Generate snippet from decoded content so highlight byte ranges
-            // are valid for the decoded text directly.
             let snippet = snippet_generator.snippet(&content);
 
             let msg = IndexMsg {
@@ -462,9 +504,9 @@ impl Indexer {
             };
             let snippet_data = if snippet.fragment().is_empty() && !content.is_empty() {
                 warn!(
-                    "Empty snippet for non-empty content (url={}): {:?}",
-                    msg.url,
-                    crate::utils::brief_content(&content, 100),
+                    url = %msg.url,
+                    "Empty snippet for non-empty content: {:?}",
+                    content.chars().take(100).collect::<String>(),
                 );
                 let truncated: String = content.chars().take(100).collect();
                 HighlightedSnippet {
@@ -493,17 +535,16 @@ impl Indexer {
         })
     }
 
-    /// Total number of documents in the index (O(1))
+    /// Total number of documents in the index (O(1)).
     pub fn num_docs(&self) -> u64 {
         self.reader.searcher().num_docs()
     }
 
-    /// List all indexed chat IDs
+    /// List all indexed chat IDs.
     pub async fn list_indexed_chats(&self) -> Result<Vec<i64>> {
         let searcher = self.reader.searcher();
         let mut chat_ids = std::collections::HashSet::new();
 
-        // Iterate through all documents and collect unique chat_ids
         for segment_reader in searcher.segment_readers() {
             let store_reader = segment_reader
                 .get_store_reader(0)
@@ -522,13 +563,11 @@ impl Indexer {
         Ok(chat_ids.into_iter().collect())
     }
 
-    /// Get document counts per chat (efficient single-pass counting)
-    /// Returns a HashMap of chat_id -> document_count
-    pub async fn get_chat_document_counts(&self) -> Result<std::collections::HashMap<i64, usize>> {
+    /// Get document counts per chat (efficient single-pass counting).
+    pub async fn get_chat_document_counts(&self) -> Result<HashMap<i64, usize>> {
         let searcher = self.reader.searcher();
-        let mut counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let mut counts: HashMap<i64, usize> = HashMap::new();
 
-        // Iterate through all documents and count by chat_id
         for segment_reader in searcher.segment_readers() {
             let store_reader = segment_reader
                 .get_store_reader(0)
@@ -547,7 +586,7 @@ impl Indexer {
         Ok(counts)
     }
 
-    /// Retrieve a random document (for /random command)
+    /// Retrieve a random document (for /random command).
     pub async fn retrieve_random_document(&self) -> Result<Option<IndexMsg>> {
         let searcher = self.reader.searcher();
         let segment_readers = searcher.segment_readers();
@@ -556,7 +595,6 @@ impl Indexer {
             return Ok(None);
         }
 
-        // Simple random selection: pick random segment and document
         use rand::Rng;
         let mut rng = rand::rng();
         let segment = &segment_readers[rng.random_range(0..segment_readers.len())];
@@ -574,7 +612,6 @@ impl Indexer {
             .get(doc_id)
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        // Extract fields
         let content = doc
             .get_first(self.fields.content)
             .and_then(|v| v.as_str())
@@ -623,7 +660,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
 
-        // Add a document
         let msg = IndexMsg {
             content: "test message hello world".to_string(),
             url: "https://t.me/c/123/456".to_string(),
@@ -634,7 +670,6 @@ mod tests {
 
         indexer.add_document(msg.clone()).await.unwrap();
 
-        // Search for it
         let results = indexer.search("test", None, 10, 1).await.unwrap();
         assert_eq!(results.total_results, 1);
         assert_eq!(results.hits[0].msg.content, msg.content);
@@ -655,7 +690,6 @@ mod tests {
 
         indexer.add_document(msg).await.unwrap();
 
-        // Update
         indexer
             .update_document("https://t.me/c/123/456", "updated content")
             .await
@@ -664,7 +698,6 @@ mod tests {
         let results = indexer.search("updated", None, 10, 1).await.unwrap();
         assert_eq!(results.total_results, 1);
 
-        // Delete
         indexer
             .delete_document("https://t.me/c/123/456")
             .await
@@ -715,7 +748,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
 
-        // Add messages from different chats
         for chat_id in [100, 200, 300] {
             let msg = IndexMsg {
                 content: format!("message from chat {}", chat_id),
@@ -727,7 +759,6 @@ mod tests {
             indexer.add_document(msg).await.unwrap();
         }
 
-        // Search in specific chats
         let results = indexer
             .search("message", Some(&[100, 200]), 10, 1)
             .await
@@ -761,7 +792,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
 
-        // Test with repeated Chinese characters
         let msg = IndexMsg {
             content: "人人都在说这个人很好".to_string(),
             url: "https://t.me/c/123/1".to_string(),
@@ -771,7 +801,6 @@ mod tests {
         };
         indexer.add_document(msg).await.unwrap();
 
-        // Search for single character that appears multiple times
         let results = indexer.search("人", None, 10, 1).await.unwrap();
         assert_eq!(results.total_results, 1);
         assert!(results.hits[0].snippet.fragment.contains("人"));
@@ -783,7 +812,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
 
-        // Add messages from multiple chats
         for chat_id in [100, 200, 300] {
             for i in 1..=5 {
                 let msg = IndexMsg {
@@ -797,31 +825,25 @@ mod tests {
             }
         }
 
-        // Verify all messages are indexed
         let results = indexer.search("message", None, 100, 1).await.unwrap();
-        assert_eq!(results.total_results, 15); // 3 chats * 5 messages
+        assert_eq!(results.total_results, 15);
 
-        // Delete all documents from chat 200
         indexer.delete_chat_documents(200).await.unwrap();
 
-        // Verify chat 200 messages are gone
         let results = indexer
             .search("message", Some(&[200]), 100, 1)
             .await
             .unwrap();
         assert_eq!(results.total_results, 0);
 
-        // Verify other chats still exist
         let results = indexer
             .search("message", Some(&[100, 300]), 100, 1)
             .await
             .unwrap();
-        assert_eq!(results.total_results, 10); // 2 chats * 5 messages
+        assert_eq!(results.total_results, 10);
 
-        // Delete all documents from chat 100
         indexer.delete_chat_documents(100).await.unwrap();
 
-        // Verify only chat 300 remains
         let results = indexer.search("message", None, 100, 1).await.unwrap();
         assert_eq!(results.total_results, 5);
     }

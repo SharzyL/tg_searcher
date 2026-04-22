@@ -6,7 +6,6 @@
 mod backend;
 mod config;
 mod frontend;
-mod indexer;
 mod session;
 mod storage;
 mod types;
@@ -131,7 +130,7 @@ async fn main() -> Result<()> {
         // Create indexer for this backend
         let index_dir = config.common.index_dir().join(&backend_config.id);
         let indexer = std::sync::Arc::new(
-            indexer::Indexer::new(&index_dir, args.clear)
+            tg_searcher_index::Indexer::new(&index_dir, args.clear)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(

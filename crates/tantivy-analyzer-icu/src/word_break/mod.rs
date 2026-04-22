@@ -3,10 +3,21 @@
 //! Wraps ICU's `UBreakIterator` to segment text into words, filtering out
 //! whitespace and punctuation segments. Returns byte offset spans in UTF-8.
 
+use std::cell::RefCell;
+
 use rust_icu_ubrk::UBreakIterator;
 
 /// Default breaking rules, copied from Lucene's ICU integration.
 const DEFAULT_RULES: &str = include_str!("../Default.rbbi");
+
+thread_local! {
+    /// Cached prototype break iterator. Compiling the RBBI rules is expensive
+    /// (~7ms), but `safe_clone()` + `set_text()` is <1µs.
+    static BREAK_ITER_PROTOTYPE: RefCell<UBreakIterator> = RefCell::new(
+        UBreakIterator::try_new_rules(DEFAULT_RULES, " ")
+            .expect("ICU break iterator init failed")
+    );
+}
 
 /// A character is "searchable" if it's not just whitespace or punctuation.
 fn is_searchable_char(c: char) -> bool {
@@ -70,8 +81,15 @@ pub fn icu_word_break(text: &str) -> Vec<(usize, usize)> {
         }
     };
 
-    let mut break_iter =
-        UBreakIterator::try_new_rules(DEFAULT_RULES, text).expect("ICU break iterator init failed");
+    let mut break_iter = BREAK_ITER_PROTOTYPE.with(|proto| {
+        let mut iter = proto
+            .borrow()
+            .safe_clone()
+            .expect("ICU break iterator clone failed");
+        iter.set_text(text)
+            .expect("ICU break iterator set_text failed");
+        iter
+    });
 
     let mut spans = Vec::new();
 

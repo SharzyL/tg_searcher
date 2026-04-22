@@ -41,7 +41,7 @@ mod han_only;
 mod semitic_normalization;
 
 pub use bigram::CJKBigramFilter;
-pub use diacritic_folding::DiacriticFoldingFilter;
+pub use diacritic_folding::{DiacriticFoldingFilter, fold_diacritics};
 pub use diacritic_only::DiacriticOnlyFilter;
 pub use han_only::HanOnlyFilter;
 pub use semitic_normalization::SemiticNormalizationFilter;
