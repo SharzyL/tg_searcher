@@ -2,7 +2,7 @@ use super::DEMO_SENTENCE;
 use super::{QueryTestCase, QueryTestGroup};
 
 pub const GROUP: QueryTestGroup = QueryTestGroup {
-    name: "Semitic Script",
+    name: "Arabic and Hebrew",
     docs: &[
         ("demo-1", DEMO_SENTENCE),
         ("ar-1", "احمد"),
@@ -61,7 +61,7 @@ pub const GROUP: QueryTestGroup = QueryTestGroup {
             name: "arabic_harakat_still_stripped",
             query: "كتاب",
             matches: &["ar-7", "ar-8"],
-            description: "Arabic harakat still stripped (by SemiticNorm, not DiacriticFolding)",
+            description: "Arabic harakat still stripped (by ArabicHebrewNorm, not DiacriticFolding)",
         },
         QueryTestCase {
             name: "arabic_tatweel_plain_query",
@@ -121,7 +121,7 @@ pub const GROUP: QueryTestGroup = QueryTestGroup {
             name: "hebrew_niqqud_stripped",
             query: "שלום",
             matches: &["demo-1", "he-2"],
-            description: "Plain Hebrew matches niqqud doc: niqqud stripped by SemiticNorm",
+            description: "Plain Hebrew matches niqqud doc: niqqud stripped by ArabicHebrewNorm",
         },
         QueryTestCase {
             name: "hebrew_niqqud_in_query",

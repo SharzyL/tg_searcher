@@ -1,4 +1,4 @@
-//! Semitic text normalization token filter.
+//! Arabic and Hebrew text normalization token filter.
 //!
 //! Normalizes Arabic and Hebrew script characters for search. Covers:
 //! - Arabic: alif variants, ta marbuta/ha, ya maqsura, tatweel, hamza carriers,
@@ -31,42 +31,42 @@ use tantivy_tokenizer_api::{Token, TokenFilter, TokenStream, Tokenizer};
 /// - Niqqud vowel points and cantillation marks (U+0591–U+05BD, U+05BF,
 ///   U+05C1–U+05C2, U+05C4–U+05C5, U+05C7) → removed
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SemiticNormalizationFilter;
+pub struct ArabicHebrewNormalizationFilter;
 
-impl TokenFilter for SemiticNormalizationFilter {
-    type Tokenizer<T: Tokenizer> = SemiticNormalizationWrapper<T>;
+impl TokenFilter for ArabicHebrewNormalizationFilter {
+    type Tokenizer<T: Tokenizer> = ArabicHebrewNormalizationWrapper<T>;
 
     fn transform<T: Tokenizer>(self, tokenizer: T) -> Self::Tokenizer<T> {
-        SemiticNormalizationWrapper { inner: tokenizer }
+        ArabicHebrewNormalizationWrapper { inner: tokenizer }
     }
 }
 
 #[derive(Clone)]
-pub struct SemiticNormalizationWrapper<T> {
+pub struct ArabicHebrewNormalizationWrapper<T> {
     inner: T,
 }
 
-impl<T: Tokenizer> Tokenizer for SemiticNormalizationWrapper<T> {
-    type TokenStream<'a> = SemiticNormalizationTokenStream<T::TokenStream<'a>>;
+impl<T: Tokenizer> Tokenizer for ArabicHebrewNormalizationWrapper<T> {
+    type TokenStream<'a> = ArabicHebrewNormalizationTokenStream<T::TokenStream<'a>>;
 
     fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
-        SemiticNormalizationTokenStream {
+        ArabicHebrewNormalizationTokenStream {
             inner: self.inner.token_stream(text),
         }
     }
 }
 
-pub struct SemiticNormalizationTokenStream<S> {
+pub struct ArabicHebrewNormalizationTokenStream<S> {
     inner: S,
 }
 
-impl<S: TokenStream> TokenStream for SemiticNormalizationTokenStream<S> {
+impl<S: TokenStream> TokenStream for ArabicHebrewNormalizationTokenStream<S> {
     fn advance(&mut self) -> bool {
         if !self.inner.advance() {
             return false;
         }
         let token = self.inner.token_mut();
-        normalize_semitic_in_place(&mut token.text);
+        normalize_arabic_hebrew_in_place(&mut token.text);
         true
     }
 
@@ -79,7 +79,7 @@ impl<S: TokenStream> TokenStream for SemiticNormalizationTokenStream<S> {
     }
 }
 
-fn normalize_semitic_char(c: char) -> Option<char> {
+fn normalize_arabic_hebrew_char(c: char) -> Option<char> {
     match c {
         // === Arabic character normalization ===
         '\u{0623}' => Some('\u{0627}'), // Alif + Hamza above → Alif
@@ -118,7 +118,7 @@ fn normalize_semitic_char(c: char) -> Option<char> {
     }
 }
 
-fn needs_semitic_normalization(c: char) -> bool {
+fn needs_arabic_hebrew_normalization(c: char) -> bool {
     matches!(
         c,
         // Arabic character normalization
@@ -133,12 +133,15 @@ fn needs_semitic_normalization(c: char) -> bool {
     )
 }
 
-fn normalize_semitic_in_place(text: &mut String) {
-    // Fast path: no Semitic-specific chars to normalize.
-    if !text.chars().any(needs_semitic_normalization) {
+fn normalize_arabic_hebrew_in_place(text: &mut String) {
+    // Fast path: no Arabic/Hebrew-specific chars to normalize.
+    if !text.chars().any(needs_arabic_hebrew_normalization) {
         return;
     }
-    let normalized: String = text.chars().filter_map(normalize_semitic_char).collect();
+    let normalized: String = text
+        .chars()
+        .filter_map(normalize_arabic_hebrew_char)
+        .collect();
     *text = normalized;
 }
 
@@ -151,70 +154,70 @@ mod tests {
     #[test]
     fn test_alif_wasla() {
         let mut s = "ٱلله".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "الله");
     }
 
     #[test]
     fn test_alif_maqsura() {
         let mut s = "فى".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "في");
     }
 
     #[test]
     fn test_ta_marbuta() {
         let mut s = "مدرسة".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "مدرسه");
     }
 
     #[test]
     fn test_farsi_ya_kaf() {
         let mut s = "یک".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "يك");
     }
 
     #[test]
     fn test_waw_hamza() {
         let mut s = "ؤلاد".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "ولاد");
     }
 
     #[test]
     fn test_ya_hamza() {
         let mut s = "ئيل".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "ييل");
     }
 
     #[test]
     fn test_tatweel_removal() {
         let mut s = "الــــله".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "الله");
     }
 
     #[test]
     fn test_standalone_hamza_removal() {
         let mut s = "ءادم".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "ادم");
     }
 
     #[test]
     fn test_arabic_indic_digits() {
         let mut s = "٢٠٢٤".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "2024");
     }
 
     #[test]
     fn test_persian_digits() {
         let mut s = "۲۰۲۴".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "2024");
     }
 
@@ -224,7 +227,7 @@ mod tests {
     fn test_arabic_harakat_stripping() {
         // كِتَابٌ → كتاب
         let mut s = "كِتَابٌ".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "كتاب");
     }
 
@@ -232,7 +235,7 @@ mod tests {
     fn test_arabic_dagger_alef() {
         // ٱلرَّحْمَنِ → الرحمن (alif wasla + harakat)
         let mut s = "ٱلرَّحْمَنِ".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "الرحمن");
     }
 
@@ -242,7 +245,7 @@ mod tests {
     fn test_hebrew_niqqud_shalom() {
         // שָׁלוֹם → שלום
         let mut s = "שָׁלוֹם".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "שלום");
     }
 
@@ -250,7 +253,7 @@ mod tests {
     fn test_hebrew_niqqud_bereshit() {
         // בְּרֵאשִׁית → בראשית
         let mut s = "בְּרֵאשִׁית".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "בראשית");
     }
 
@@ -259,35 +262,35 @@ mod tests {
     #[test]
     fn test_no_arabic_unchanged() {
         let mut s = "hello world".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "hello world");
     }
 
     #[test]
     fn test_cjk_unchanged() {
         let mut s = "你好".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "你好");
     }
 
     #[test]
     fn test_latin_diacritics_unchanged() {
         let mut s = "café".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "café");
     }
 
     #[test]
     fn test_mixed_arabic_latin() {
         let mut s = "test٢٠٢٤test".to_string();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "test2024test");
     }
 
     #[test]
     fn test_empty() {
         let mut s = String::new();
-        normalize_semitic_in_place(&mut s);
+        normalize_arabic_hebrew_in_place(&mut s);
         assert_eq!(s, "");
     }
 }

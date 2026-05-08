@@ -8,7 +8,7 @@
 //!
 //! Applied in this recommended order:
 //!
-//! 1. [`SemiticNormalizationFilter`] — Arabic character normalization (alif variants,
+//! 1. [`ArabicHebrewNormalizationFilter`] — Arabic character normalization (alif variants,
 //!    ta marbuta, tatweel removal, digit mapping) + harakat/niqqud stripping.
 //! 2. [`DiacriticFoldingFilter`] — NFD decompose, strip foldable diacritics
 //!    (U+0300–036F, U+1AB0–1AFF, U+1DC0–1DFF), NFC recompose. Preserves
@@ -34,17 +34,17 @@
 //! [`ICUSearchConfig::route_query`](crate::search::ICUSearchConfig::route_query)
 //! to decide which characters need unigram fallback.
 
+mod arabic_hebrew_normalization;
 mod bigram;
 mod diacritic_folding;
 mod diacritic_only;
 mod han_only;
-mod semitic_normalization;
 
+pub use arabic_hebrew_normalization::ArabicHebrewNormalizationFilter;
 pub use bigram::CJKBigramFilter;
 pub use diacritic_folding::{DiacriticFoldingFilter, fold_diacritics};
 pub use diacritic_only::DiacriticOnlyFilter;
 pub use han_only::HanOnlyFilter;
-pub use semitic_normalization::SemiticNormalizationFilter;
 
 use tantivy_tokenizer_api::Token;
 use unicode_normalization::UnicodeNormalization;
@@ -173,8 +173,8 @@ pub fn has_foldable_diacritic(text: &str) -> bool {
 }
 
 /// Finds isolated Han characters in a token sequence produced by the base
-/// analyzer (NormalizingICUTokenizer + DiacriticFolding + ArabicNorm, without
-/// CJK bigram/unigram filters).
+/// analyzer (NormalizingICUTokenizer + DiacriticFolding + ArabicHebrewNorm,
+/// without CJK bigram/unigram filters).
 ///
 /// Uses the same offset-adjacency + script-group logic as [`CJKBigramFilter`]:
 /// tokens form a "run" when they share the same script group AND their offsets

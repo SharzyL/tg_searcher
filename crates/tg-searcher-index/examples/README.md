@@ -40,7 +40,7 @@ force-merged to single segment after commit.
 | zstd22 | 168,630 | 156,499 | 0.93x |
 
 ICU insertion is 1.1–1.9x slower due to the heavier tokenization pipeline
-(NFKC Casefold + ICU word break + SemiticNorm + DiacriticFolding + CJK filters)
+(NFKC Casefold + ICU word break + ArabicHebrewNorm + DiacriticFolding + CJK filters)
 applied to three fields per document.
 
 zstd7 outperforms lz4 for ICU because smaller compressed blocks reduce disk I/O.
@@ -111,6 +111,6 @@ benchmarking work:
 2. **Eliminated double tokenization in `route_query`** (`search.rs`):
    Previously `route_query` ran the ICU pipeline twice (once in
    `base_tokenize`, once in `QueryParser::parse_query`). Now it tokenizes
-   once with `semitic_tokenize()`, then derives all three term sets
+   once with `arabic_hebrew_tokenize()`, then derives all three term sets
    (folded\_bigram, unigram, diacritic) with pure Rust string operations,
    building `TermQuery`/`PhraseQuery` directly.

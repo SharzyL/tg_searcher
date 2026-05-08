@@ -46,8 +46,8 @@ use crate::filter::{
     ScriptGroup, fold_diacritics, is_foldable_diacritic, is_han_char, token_script_group,
 };
 use crate::{
-    CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter, HanOnlyFilter,
-    NormalizingICUTokenizer, SemiticNormalizationFilter,
+    ArabicHebrewNormalizationFilter, CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter,
+    HanOnlyFilter, NormalizingICUTokenizer,
 };
 
 const DEFAULT_MAX_SNIPPET_CHARS: usize = 150;
@@ -159,14 +159,14 @@ impl ICUSearchConfig {
     /// Register the ICU analyzers on the index.
     ///
     /// Three analyzers are registered:
-    /// - `"icu_folded_bigram"`: SemiticNorm → DiacriticFolding → CJKBigram
-    /// - `"icu_unigram"`: SemiticNorm → DiacriticFolding → HanOnly
-    /// - `"icu_diacritic"`: SemiticNorm → DiacriticOnly (sparse, pre-fold form)
+    /// - `"icu_folded_bigram"`: ArabicHebrewNorm → DiacriticFolding → CJKBigram
+    /// - `"icu_unigram"`: ArabicHebrewNorm → DiacriticFolding → HanOnly
+    /// - `"icu_diacritic"`: ArabicHebrewNorm → DiacriticOnly (sparse, pre-fold form)
     ///
     /// Must be called after index creation, before indexing or searching.
     pub fn register_analyzers(&self, index: &Index) {
         let folded_bigram = TextAnalyzer::builder(NormalizingICUTokenizer)
-            .filter(SemiticNormalizationFilter)
+            .filter(ArabicHebrewNormalizationFilter)
             .filter(DiacriticFoldingFilter)
             .filter(CJKBigramFilter)
             .build();
@@ -175,14 +175,14 @@ impl ICUSearchConfig {
             .register("icu_folded_bigram", folded_bigram);
 
         let unigram = TextAnalyzer::builder(NormalizingICUTokenizer)
-            .filter(SemiticNormalizationFilter)
+            .filter(ArabicHebrewNormalizationFilter)
             .filter(DiacriticFoldingFilter)
             .filter(HanOnlyFilter)
             .build();
         index.tokenizers().register("icu_unigram", unigram);
 
         let diacritic = TextAnalyzer::builder(NormalizingICUTokenizer)
-            .filter(SemiticNormalizationFilter)
+            .filter(ArabicHebrewNormalizationFilter)
             .filter(DiacriticOnlyFilter)
             .build();
         index.tokenizers().register("icu_diacritic", diacritic);
@@ -207,15 +207,15 @@ impl ICUSearchConfig {
         fields: &ICUFieldGroup,
         query_text: &str,
     ) -> tantivy::Result<Box<dyn Query>> {
-        // Single tokenization pass: NormalizingICUTokenizer → SemiticNorm
-        let semitic_tokens = self.semitic_tokenize(query_text);
+        // Single tokenization pass: NormalizingICUTokenizer → ArabicHebrewNorm
+        let normalized_tokens = self.arabic_hebrew_tokenize(query_text);
 
-        // Derive all three term sets from the semitic-normalized tokens:
+        // Derive all three term sets from the Arabic/Hebrew-normalized tokens:
         let QueryTerms {
             folded_bigram_groups,
             unigram_terms,
             diacritic_terms,
-        } = Self::derive_query_terms(&semitic_tokens);
+        } = Self::derive_query_terms(&normalized_tokens);
 
         let total_num_docs = searcher.num_docs();
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
@@ -401,14 +401,14 @@ impl ICUSearchConfig {
         }
     }
 
-    /// Tokenize text with NormalizingICUTokenizer + SemiticNorm only (no diacritic folding).
+    /// Tokenize text with NormalizingICUTokenizer + ArabicHebrewNorm only (no diacritic folding).
     ///
     /// This is the single tokenization pass used by `route_query`. The returned
-    /// tokens are at the "semitic-normalized" stage — DiacriticFolding and
+    /// tokens are at the "Arabic/Hebrew-normalized" stage — DiacriticFolding and
     /// CJK bigram/unigram/diacritic-only filters have NOT been applied yet.
-    fn semitic_tokenize(&self, text: &str) -> Vec<Token> {
+    fn arabic_hebrew_tokenize(&self, text: &str) -> Vec<Token> {
         let mut analyzer = TextAnalyzer::builder(NormalizingICUTokenizer)
-            .filter(SemiticNormalizationFilter)
+            .filter(ArabicHebrewNormalizationFilter)
             .build();
         let mut stream = analyzer.token_stream(text);
         let mut tokens = Vec::new();
@@ -418,7 +418,7 @@ impl ICUSearchConfig {
         tokens
     }
 
-    /// Derive all three sets of query terms from semitic-normalized tokens.
+    /// Derive all three sets of query terms from Arabic/Hebrew-normalized tokens.
     ///
     /// This replicates the logic of the three analyzer pipelines
     /// (folded_bigram, unigram, diacritic) without re-tokenizing:
@@ -427,9 +427,9 @@ impl ICUSearchConfig {
     ///   isolated Han dropped). Each CJK bigram run produces a phrase group.
     /// - **unigram**: fold diacritics → isolated Han characters only
     /// - **diacritic**: pre-fold tokens that contain foldable diacritics
-    fn derive_query_terms(semitic_tokens: &[Token]) -> QueryTerms {
+    fn derive_query_terms(normalized_tokens: &[Token]) -> QueryTerms {
         // Step 1: fold diacritics on each token
-        let folded: Vec<String> = semitic_tokens
+        let folded: Vec<String> = normalized_tokens
             .iter()
             .map(|t| fold_diacritics(&t.text))
             .collect();
@@ -457,7 +457,7 @@ impl ICUSearchConfig {
             i += 1;
             while i < len
                 && token_script_group(&folded[i]) == script
-                && semitic_tokens[i].offset_from <= semitic_tokens[i - 1].offset_to
+                && normalized_tokens[i].offset_from <= normalized_tokens[i - 1].offset_to
             {
                 i += 1;
             }
@@ -481,7 +481,7 @@ impl ICUSearchConfig {
         }
 
         // Step 3: diacritic terms (pre-fold tokens with foldable diacritics)
-        let diacritic_terms: Vec<String> = semitic_tokens
+        let diacritic_terms: Vec<String> = normalized_tokens
             .iter()
             .filter(|t| {
                 use unicode_normalization::UnicodeNormalization;

@@ -4,7 +4,7 @@
 //!
 //! | Module | Description |
 //! |--------|-------------|
-//! | [`filter`] | Token filters: [`CJKBigramFilter`], [`HanOnlyFilter`], [`DiacriticFoldingFilter`], [`DiacriticOnlyFilter`], [`SemiticNormalizationFilter`], and script classification utilities |
+//! | [`filter`] | Token filters: [`CJKBigramFilter`], [`HanOnlyFilter`], [`DiacriticFoldingFilter`], [`DiacriticOnlyFilter`], [`ArabicHebrewNormalizationFilter`], and script classification utilities |
 //! | [`normalizer`] | [`NormalizedText`]: NFKC Casefold normalization with byte offset mapping |
 //! | [`cjk`] | CJK character detection ([`is_cjk_char`]) and unigram expansion |
 //! | [`word_break`] | ICU word break iterator wrapper |
@@ -23,8 +23,8 @@ pub mod word_break;
 
 pub use cjk::is_cjk_char;
 pub use filter::{
-    CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter, HanOnlyFilter, ScriptGroup,
-    SemiticNormalizationFilter, find_isolated_han_tokens, has_foldable_diacritic,
+    ArabicHebrewNormalizationFilter, CJKBigramFilter, DiacriticFoldingFilter, DiacriticOnlyFilter,
+    HanOnlyFilter, ScriptGroup, find_isolated_han_tokens, has_foldable_diacritic,
     is_foldable_diacritic, is_han_char, token_script_group,
 };
 

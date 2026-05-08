@@ -4,7 +4,7 @@
 //! from token text via NFD decomposition → filter foldable marks → NFC
 //! recomposition. Structurally significant marks (Japanese dakuten, Devanagari
 //! virama, Arabic harakat, Hebrew niqqud) are preserved — Arabic/Hebrew marks
-//! are handled by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter).
+//! are handled by [`ArabicHebrewNormalizationFilter`](crate::ArabicHebrewNormalizationFilter).
 
 use tantivy_tokenizer_api::{Token, TokenFilter, TokenStream, Tokenizer};
 use unicode_normalization::UnicodeNormalization;
@@ -23,8 +23,8 @@ use super::is_foldable_diacritic;
 /// Preserved (not foldable):
 /// - Japanese dakuten `で` stays `で` (U+3099 not in foldable range)
 /// - Devanagari virama `क्ष` stays `क्ष` (U+094D not in foldable range)
-/// - Arabic harakat (stripped by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter))
-/// - Hebrew niqqud (stripped by [`SemiticNormalizationFilter`](crate::SemiticNormalizationFilter))
+/// - Arabic harakat (stripped by [`ArabicHebrewNormalizationFilter`](crate::ArabicHebrewNormalizationFilter))
+/// - Hebrew niqqud (stripped by [`ArabicHebrewNormalizationFilter`](crate::ArabicHebrewNormalizationFilter))
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DiacriticFoldingFilter;
 
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_fold_preserves_arabic_harakat() {
-        // Arabic harakat are NOT in foldable range (handled by SemiticNorm)
+        // Arabic harakat are NOT in foldable range (handled by ArabicHebrewNorm)
         let mut s = "كِتَابٌ".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "كِتَابٌ");
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_fold_preserves_hebrew_niqqud() {
-        // Hebrew niqqud NOT in foldable range (handled by SemiticNorm)
+        // Hebrew niqqud NOT in foldable range (handled by ArabicHebrewNorm)
         let mut s = "שָׁלוֹם".to_string();
         fold_diacritics_in_place(&mut s);
         assert_eq!(s, "שָׁלוֹם");

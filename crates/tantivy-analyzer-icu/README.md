@@ -2,7 +2,7 @@
 
 ICU-based text analysis for [tantivy](https://github.com/quickwit-oss/tantivy),
 with multilingual support for CJK bigram search, smartcase diacritic handling,
-and Semitic script normalization. All token offsets map back to the original
+and Arabic/Hebrew script normalization. All token offsets map back to the original
 (pre-normalization) text for correct snippet highlighting.
 
 ## Feature Flags
@@ -23,12 +23,12 @@ that implement `tantivy-tokenizer-api` traits:
 ```rust
 use tantivy::tokenizer::TextAnalyzer;
 use tantivy_analyzer_icu::{
-    NormalizingICUTokenizer, SemiticNormalizationFilter,
+    NormalizingICUTokenizer, ArabicHebrewNormalizationFilter,
     DiacriticFoldingFilter, CJKBigramFilter,
 };
 
 let analyzer = TextAnalyzer::builder(NormalizingICUTokenizer)
-    .filter(SemiticNormalizationFilter)
+    .filter(ArabicHebrewNormalizationFilter)
     .filter(DiacriticFoldingFilter)
     .filter(CJKBigramFilter)
     .build();
@@ -100,7 +100,7 @@ NormalizingICUTokenizer
        individual characters)
   │
   ▼
-SemiticNormalizationFilter
+ArabicHebrewNormalizationFilter
   Arabic: harakat stripping, alif variants→alif, ta marbuta→ha,
   alif maqsura→ya, Farsi variants→Arabic, tatweel/hamza removal,
   Arabic-Indic/Persian digits→ASCII
@@ -153,7 +153,7 @@ Step 3 — CJK unigram expansion:
   [8] [月] [10] [日] | [二] | [人] | [幸] | [终]
   (| = offset gap from 、or space in original text)
 
-Step 4 — SemiticNormalizationFilter:
+Step 4 — ArabicHebrewNormalizationFilter:
   [كَبَاب]→[كباب]  harakat stripped
   [שָׁלוֹם]→[שלום]  niqqud stripped
   [नमस्ते] unchanged — virama (U+094D) is NOT stripped
@@ -195,8 +195,8 @@ Things to note:
 - **で stays で**: Dakuten (U+3099) is NOT in the foldable range, so it is preserved.
 - **नमस्ते stays नमस्ते**: Devanagari virama (U+094D) is NOT foldable. The conjunct
   स्त (sa + virama + ta) is preserved intact.
-- **שָׁלוֹם→שלום**: Hebrew niqqud stripped by SemiticNormalizationFilter.
-- **كَبَاب→كباب**: Arabic harakat (fatha) stripped by SemiticNormalizationFilter.
+- **שָׁלוֹם→שלום**: Hebrew niqqud stripped by ArabicHebrewNormalizationFilter.
+- **كَبَاب→كباب**: Arabic harakat (fatha) stripped by ArabicHebrewNormalizationFilter.
 - **8月10日**: Numbers `8` and `10` are non-CJK tokens. 月 and 日 are Han chars
   isolated between them — dropped from folded\_bigram, kept in unigram.
 - **、二 人 幸 终。**: Punctuation (、。) is stripped. Spaces between 二, 人, 幸, 终

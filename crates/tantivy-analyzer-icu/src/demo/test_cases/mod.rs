@@ -25,6 +25,7 @@ pub struct QueryTestGroup {
     pub cases: &'static [QueryTestCase],
 }
 
+mod arabic_hebrew;
 mod brahmic;
 mod chinese_combined;
 mod chinese_simple;
@@ -35,7 +36,6 @@ mod korean;
 mod latin;
 mod mixed;
 mod scoring;
-mod semitic;
 
 pub const QUERY_TEST_GROUPS: &[QueryTestGroup] = &[
     chinese_simple::GROUP,
@@ -44,7 +44,7 @@ pub const QUERY_TEST_GROUPS: &[QueryTestGroup] = &[
     korean::GROUP,
     cjk_normalization::GROUP,
     latin::GROUP,
-    semitic::GROUP,
+    arabic_hebrew::GROUP,
     brahmic::GROUP,
     mixed::GROUP,
     degenerate::GROUP,
