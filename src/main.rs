@@ -275,21 +275,21 @@ mod tests {
     #[test]
     fn test_args_parsing() {
         // Test default values
-        let args = Args::parse_from(&["tg-searcher"]);
+        let args = Args::parse_from(["tg-searcher"]);
         assert!(!args.clear);
         assert_eq!(args.config, PathBuf::from("searcher.yaml"));
         assert!(!args.debug);
         assert!(!args.debug_all);
 
         // Test with flags
-        let args = Args::parse_from(&["tg-searcher", "--clear", "--debug", "-c", "test.yaml"]);
+        let args = Args::parse_from(["tg-searcher", "--clear", "--debug", "-c", "test.yaml"]);
         assert!(args.clear);
         assert_eq!(args.config, PathBuf::from("test.yaml"));
         assert!(args.debug);
         assert!(!args.debug_all);
 
         // Test --debug-all
-        let args = Args::parse_from(&["tg-searcher", "--debug-all"]);
+        let args = Args::parse_from(["tg-searcher", "--debug-all"]);
         assert!(args.debug_all);
     }
 }

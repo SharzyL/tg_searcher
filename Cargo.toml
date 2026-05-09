@@ -20,6 +20,7 @@ html-escape = "0.2.13"
 nix = { version = "0.31.2", features = ["user"] }
 rpassword = "7.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 serde_yaml = "0.9.34"
 shell-words = "1.1.1"
 tg-searcher-index = { path = "crates/tg-searcher-index" }

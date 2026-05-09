@@ -1,5 +1,5 @@
-//! Benchmark comparing jieba (tg-searcher-index) vs ICU (tantivy-analyzer-icu)
-//! indexing backends using real Telegram Desktop export data.
+//! Benchmark for the ICU-based `tg-searcher-index` Indexer using real
+//! Telegram Desktop export data.
 //!
 //! Usage:
 //!   cargo run -p tg-searcher-index --example benchmark --release -- \
@@ -20,7 +20,7 @@ use tantivy_analyzer_icu::search::ICUSearchConfig;
 // ── CLI ─────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(about = "Benchmark jieba vs ICU indexing backends")]
+#[command(about = "Benchmark the ICU indexing backend")]
 struct Args {
     /// Path to Telegram Desktop export result.json
     #[arg(long)]
@@ -245,7 +245,7 @@ const DEFAULT_QUERIES: &[&str] = &[
     "xyzzyspoon",
 ];
 
-// ── Jieba backend ───────────────────────────────────────────────────
+// ── ICU benchmark ───────────────────────────────────────────────────
 
 struct BenchResult {
     insert_time: Duration,
@@ -261,102 +261,6 @@ struct QueryResult {
 }
 
 const QUERY_ITERATIONS: usize = 100;
-
-fn bench_jieba(
-    msgs: &[BenchMessage],
-    queries: &[&str],
-    keep_dir: Option<&Path>,
-    settings: IndexSettings,
-) -> BenchResult {
-    let tmp = tempfile::tempdir().unwrap();
-    let index_dir = keep_dir
-        .map(|d| d.join("jieba"))
-        .unwrap_or_else(|| tmp.path().join("jieba"));
-    std::fs::create_dir_all(&index_dir).unwrap();
-
-    let mut schema_builder = Schema::builder();
-    let text_options = TextOptions::default()
-        .set_indexing_options(
-            TextFieldIndexing::default()
-                .set_tokenizer("jieba")
-                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
-        )
-        .set_stored();
-    let content_field = schema_builder.add_text_field("content", text_options);
-    let url_field = schema_builder.add_text_field("url", STRING | STORED);
-    let chat_id_field = schema_builder.add_i64_field("chat_id", INDEXED | STORED);
-    let post_time_field = schema_builder.add_date_field("post_time", STORED | FAST);
-    let sender_field = schema_builder.add_text_field("sender", STORED);
-    let schema = schema_builder.build();
-
-    let start = Instant::now();
-    let index = Index::builder()
-        .schema(schema)
-        .settings(settings)
-        .create_in_dir(&index_dir)
-        .unwrap();
-    index
-        .tokenizers()
-        .register("jieba", tg_searcher_index::ChineseTokenizer::new());
-
-    let mut writer = index.writer(200_000_000).unwrap();
-
-    let num_docs = msgs.len();
-    for m in msgs {
-        let url = format!("https://t.me/c/bench/{}", m.id);
-        let post_time = tantivy::DateTime::from_timestamp_secs(m.post_time.timestamp());
-        writer
-            .add_document(doc!(
-                content_field => m.text.as_str(),
-                url_field => url,
-                chat_id_field => 1i64,
-                post_time_field => post_time,
-                sender_field => m.sender.as_str(),
-            ))
-            .unwrap();
-    }
-    writer.commit().unwrap();
-    let insert_time = start.elapsed();
-    force_merge_single(&mut writer, &index);
-
-    let index_size = dir_size(&index_dir);
-
-    let reader = index
-        .reader_builder()
-        .reload_policy(ReloadPolicy::Manual)
-        .try_into()
-        .unwrap();
-    let searcher = reader.searcher();
-
-    let mut query_results = Vec::new();
-    for &q in queries {
-        let mut latencies = Vec::new();
-        let mut hit_count = 0;
-        for _ in 0..QUERY_ITERATIONS {
-            let start = Instant::now();
-            let query_parser = tantivy::query::QueryParser::for_index(&index, vec![content_field]);
-            let query = query_parser.parse_query(q).unwrap();
-            let count = searcher.search(&*query, &Count).unwrap();
-            latencies.push(start.elapsed());
-            hit_count = count;
-        }
-        latencies.sort();
-        query_results.push(QueryResult {
-            query: q.to_string(),
-            median_latency: median(&latencies),
-            hit_count,
-        });
-    }
-
-    BenchResult {
-        insert_time,
-        index_size,
-        num_docs,
-        query_results,
-    }
-}
-
-// ── ICU backend ─────────────────────────────────────────────────────
 
 fn bench_icu(
     msgs: &[BenchMessage],
@@ -478,61 +382,33 @@ fn main() {
 
     let keep = args.keep_dir.as_deref();
     if let Some(d) = keep {
-        let _ = std::fs::remove_dir_all(d.join("jieba"));
         let _ = std::fs::remove_dir_all(d.join("icu"));
         std::fs::create_dir_all(d).unwrap();
     }
 
-    println!("Running jieba benchmark...");
-    let jieba = bench_jieba(&msgs, &queries, keep, settings.clone());
-
     println!("Running ICU benchmark...");
     let icu = bench_icu(&msgs, &queries, keep, settings);
 
-    // Print results
     println!();
     println!("=== Insertion ===");
-    println!("{:<14} {:<14} {:<14}", "", "jieba", "icu");
+    println!("{:<14} {:.3}s", "Time", icu.insert_time.as_secs_f64());
     println!(
-        "{:<14} {:<14} {:<14}",
-        "Time",
-        format!("{:.3}s", jieba.insert_time.as_secs_f64()),
-        format!("{:.3}s", icu.insert_time.as_secs_f64()),
-    );
-    println!(
-        "{:<14} {:<14} {:<14}",
+        "{:<14} {:.0} msg/s",
         "Throughput",
-        format!(
-            "{:.0} msg/s",
-            jieba.num_docs as f64 / jieba.insert_time.as_secs_f64()
-        ),
-        format!(
-            "{:.0} msg/s",
-            icu.num_docs as f64 / icu.insert_time.as_secs_f64()
-        ),
+        icu.num_docs as f64 / icu.insert_time.as_secs_f64()
     );
-    println!(
-        "{:<14} {:<14} {:<14}",
-        "Size",
-        format_size(jieba.index_size),
-        format_size(icu.index_size),
-    );
+    println!("{:<14} {}", "Size", format_size(icu.index_size));
 
     println!();
     println!("=== Queries (median of {} runs) ===", QUERY_ITERATIONS);
-    println!(
-        "{:<20} {:>12} {:>12} {:>12} {:>12}",
-        "Query", "jieba (ms)", "icu (ms)", "jieba hits", "icu hits"
-    );
-    println!("{}", "-".repeat(68));
-    for (jq, iq) in jieba.query_results.iter().zip(icu.query_results.iter()) {
+    println!("{:<24} {:>12} {:>12}", "Query", "icu (ms)", "icu hits");
+    println!("{}", "-".repeat(50));
+    for q in &icu.query_results {
         println!(
-            "{:<20} {:>12.3} {:>12.3} {:>12} {:>12}",
-            format!("\"{}\"", jq.query),
-            jq.median_latency.as_secs_f64() * 1000.0,
-            iq.median_latency.as_secs_f64() * 1000.0,
-            jq.hit_count,
-            iq.hit_count,
+            "{:<24} {:>12.3} {:>12}",
+            format!("\"{}\"", q.query),
+            q.median_latency.as_secs_f64() * 1000.0,
+            q.hit_count,
         );
     }
 }

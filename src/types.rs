@@ -4,7 +4,7 @@ use thiserror::Error;
 use tokio::task::JoinError;
 
 // Re-export index types used by other modules in this crate.
-pub use tg_searcher_index::HighlightedSnippet;
+pub use tg_searcher_index::{HighlightedSnippet, SortMode};
 
 /// Main error type for TG Searcher
 #[derive(Error, Debug)]

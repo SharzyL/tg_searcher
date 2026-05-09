@@ -155,12 +155,11 @@ impl ClientSession {
             }
             Err(SignInError::PasswordRequired(password_token)) => {
                 // 2FA required
-                let hint = password_token.hint().unwrap_or("None");
-                let password = rpassword::prompt_password(format!(
-                    "Enter your 2FA password (hint: {}): ",
-                    hint
-                ))
-                .map_err(Error::Io)?;
+                let prompt = match password_token.hint() {
+                    Some(hint) => format!("Enter your 2FA password (hint: {}): ", hint),
+                    None => "Enter your 2FA password: ".to_string(),
+                };
+                let password = rpassword::prompt_password(prompt).map_err(Error::Io)?;
 
                 client
                     .check_password(password_token, password.trim())

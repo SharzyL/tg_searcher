@@ -57,8 +57,14 @@ const DIACRITIC_BOOST: Score = 1.5;
 
 /// Compute IDF using the same formula as tantivy's BM25:
 /// `ln(1 + (N - n + 0.5) / (n + 0.5))`
+///
+/// `saturating_sub` guards against `doc_freq > total_num_docs`, which can
+/// happen transiently when a segment has marked-but-unmerged deletions:
+/// `searcher.num_docs()` excludes deleted docs while `searcher.doc_freq()`
+/// counts the raw posting list.
 fn compute_idf(doc_freq: u64, total_num_docs: u64) -> Score {
-    let x = ((total_num_docs - doc_freq) as Score + 0.5) / (doc_freq as Score + 0.5);
+    let n = total_num_docs.saturating_sub(doc_freq);
+    let x = (n as Score + 0.5) / (doc_freq as Score + 0.5);
     (1.0 + x).ln()
 }
 

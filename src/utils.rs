@@ -274,6 +274,7 @@ fn collapse_byte_ranges(ranges: &[std::ops::Range<usize>]) -> Vec<std::ops::Rang
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)] // tests intentionally build Vec<Range>
 mod tests {
     use super::*;
 

@@ -1,8 +1,7 @@
-# Benchmark: jieba vs ICU indexing backends
+# Benchmark: ICU indexing backend
 
-Compares `tg-searcher-index` (jieba tokenizer, single content field) against
-`tantivy-analyzer-icu` (ICU tokenizer, three-field schema: folded\_bigram +
-unigram + diacritic).
+Measures insertion throughput, on-disk size, and query latency for the
+ICU-based `tg-searcher-index` schema (folded\_bigram + unigram + diacritic).
 
 ## Usage
 
@@ -24,7 +23,11 @@ Options:
 - `--compressor`: `lz4` (default), `zstd`, `zstd7`, `zstd22`, `none`
 - `--keep-dir`: persist index files for inspection
 
-## Results
+## Historical results (jieba vs ICU, pre-migration)
+
+These numbers were captured before `tg-searcher-index` was migrated to ICU.
+They are kept here as reference, since the comparative workload is not
+reproducible in the current crate state.
 
 Test environment: Linux 6.18, Rust 1.87 (release profile), tantivy 0.26.
 Data: 276,291 real Telegram messages (avg 14 chars), writer heap 200 MB,
@@ -40,10 +43,11 @@ force-merged to single segment after commit.
 | zstd22 | 168,630 | 156,499 | 0.93x |
 
 ICU insertion is 1.1–1.9x slower due to the heavier tokenization pipeline
-(NFKC Casefold + ICU word break + ArabicHebrewNorm + DiacriticFolding + CJK filters)
-applied to three fields per document.
+(NFKC Casefold + ICU word break + ArabicHebrewNorm + DiacriticFolding + CJK
+filters) applied to three indexed fields per document.
 
-zstd7 outperforms lz4 for ICU because smaller compressed blocks reduce disk I/O.
+zstd7 outperforms lz4 for ICU because smaller compressed blocks reduce disk
+I/O.
 
 ### Index size (single segment, 276K docs)
 
@@ -58,8 +62,8 @@ Compression only affects `.store` (document store). The index fields
 | zstd22 | 11.0 MB | 11.4 MB | 21.5 MB | 33.7 MB |
 
 Both backends store the same fields (content, url, chat\_id, post\_time,
-sender), so `.store` size is identical. The ~12 MB difference is entirely from
-ICU's three index fields vs jieba's one:
+sender), so `.store` size is identical. The ~12 MB difference is entirely
+from ICU's three index fields vs jieba's one:
 
 | File type | Purpose | jieba | ICU | delta |
 |---|---|---|---|---|
@@ -97,10 +101,7 @@ uses `PhraseQuery` on bigram sequences which is slower than jieba's simple
 `TermQuery` OR. All latencies are sub-millisecond and imperceptible in
 practice.
 
-### Optimizations applied
-
-Two optimizations were applied to `tantivy-analyzer-icu` during this
-benchmarking work:
+### Optimizations applied during this work
 
 1. **Cached ICU break iterator** (`word_break/mod.rs`): The RBBI rule
    compilation in `UBreakIterator::try_new_rules` costs ~7ms per call.

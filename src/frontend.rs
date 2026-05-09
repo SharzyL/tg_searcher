@@ -11,7 +11,7 @@ use crate::backend::BackendBot;
 use crate::config::{BotFrontendConfig, FrontendConfig};
 use crate::session::ClientSession;
 use crate::storage::Storage;
-use crate::types::Result;
+use crate::types::{Result, SortMode};
 use crate::utils::MessageBuilder;
 use crate::utils::remove_first_word;
 use grammers_client::client::UpdatesConfiguration;
@@ -20,6 +20,7 @@ use grammers_client::{Client, InputMessage, button, reply_markup};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use grammers_session::defs::{PeerId, PeerKind};
 use grammers_tl_types as tl;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use tg_searcher_index::SearchResult;
@@ -27,6 +28,22 @@ use tracing::{debug, error, info, warn};
 
 /// Callback data for disabled/non-interactive buttons
 const NOOP_CALLBACK: &[u8] = b"noop";
+
+/// Per-message search state persisted in the storage backend, keyed by
+/// `{frontend_id}:search:{chat_id}:{message_id}`.
+///
+/// `#[serde(default)]` on every non-required field gives us forward-compat:
+/// adding a field doesn't break records written by older versions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SearchState {
+    query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chats: Option<Vec<i64>>,
+    #[serde(default)]
+    sort: SortMode,
+    #[serde(default)]
+    reverse: bool,
+}
 
 /// Bot frontend for user interaction
 pub struct BotFrontend {
@@ -248,7 +265,7 @@ impl BotFrontend {
         let mut updates = client_ref.stream_updates(
             updates,
             UpdatesConfiguration {
-                catch_up: true,
+                catch_up: false,
                 ..Default::default()
             },
         );
@@ -414,7 +431,20 @@ impl BotFrontend {
         match parts[0] {
             "search_page" => {
                 let page_num: usize = parts[1].parse().unwrap_or(1);
-                self.handle_search_page(chat_id, message_id, page_num)
+                self.refresh_search_message(chat_id, message_id, Some(page_num), None, None)
+                    .await?;
+            }
+            "search_sort" => {
+                let new_sort = match parts[1] {
+                    "relevance" => SortMode::Relevance,
+                    _ => SortMode::Time,
+                };
+                self.refresh_search_message(chat_id, message_id, Some(1), Some(new_sort), None)
+                    .await?;
+            }
+            "search_reverse" => {
+                let new_reverse = parts[1] == "1";
+                self.refresh_search_message(chat_id, message_id, Some(1), None, Some(new_reverse))
                     .await?;
             }
             "select_chat" => {
@@ -430,51 +460,107 @@ impl BotFrontend {
         Ok(())
     }
 
-    /// Handle search pagination
-    async fn handle_search_page(
+    /// Re-run the search behind a previously-rendered result message and edit
+    /// it in place. Each `Some(_)` argument overrides the persisted state for
+    /// that field; `None` means "keep what's in storage".
+    async fn refresh_search_message(
         &self,
         chat_id: i64,
         message_id: i32,
-        page_num: usize,
+        new_page_num: Option<usize>,
+        new_sort: Option<SortMode>,
+        new_reverse: Option<bool>,
     ) -> Result<()> {
-        // Retrieve query from storage
-        let query_key = format!("{}:query_text:{}:{}", self.id, chat_id, message_id);
-        let chats_key = format!("{}:query_chats:{}:{}", self.id, chat_id, message_id);
+        // Load persisted state (query is required; sort/reverse default if missing)
+        let mut state = match self.read_search_state(chat_id, message_id).await? {
+            Some(s) => s,
+            None => return Ok(()), // expired / unknown message
+        };
 
-        let query = self.storage.get(&query_key).await?;
-        let chats_str = self.storage.get(&chats_key).await?;
+        // Apply overrides from this callback
+        if let Some(s) = new_sort {
+            state.sort = s;
+        }
+        if let Some(r) = new_reverse {
+            state.reverse = r;
+        }
+        let page_num = new_page_num.unwrap_or(1);
 
-        if let Some(q) = query {
-            let chats: Option<Vec<i64>> =
-                chats_str.map(|s| s.split(',').filter_map(|id| id.parse().ok()).collect());
-
-            info!(
-                "[{}] query [{}] (chats={:?}) turned to page {}",
-                self.id, q, chats, page_num
-            );
-
-            let start_time = Instant::now();
-            let result = self
-                .backend
-                .search(&q, chats.as_deref(), self.config.page_len, page_num)
-                .await?;
-            let used_time = start_time.elapsed().as_secs_f64();
-
-            let buttons = self.render_buttons(&result, page_num);
-            let message = self
-                .render_response_message(&result, used_time, buttons)
-                .await?;
-
-            // Edit message with new page
-            self.edit_input_message(chat_id, message_id, message)
-                .await?;
-            info!(
-                "[{}] updated search results to page {} ({} results)",
-                self.id, page_num, result.total_results
-            );
+        // Persist any state mutation (sort/reverse changes only — page is not stored)
+        if new_sort.is_some() || new_reverse.is_some() {
+            self.write_search_state(chat_id, message_id, &state).await?;
         }
 
+        info!(
+            "[{}] refresh search [{}] chats={:?} page={} sort={:?} rev={}",
+            self.id, state.query, state.chats, page_num, state.sort, state.reverse
+        );
+
+        let start_time = Instant::now();
+        let result = self
+            .backend
+            .search(
+                &state.query,
+                state.chats.as_deref(),
+                self.config.page_len,
+                page_num,
+                state.sort,
+                state.reverse,
+            )
+            .await?;
+        let used_time = start_time.elapsed().as_secs_f64();
+
+        let buttons = self.render_buttons(&result, page_num, state.sort, state.reverse);
+        let message = self
+            .render_response_message(&result, used_time, buttons)
+            .await?;
+
+        self.edit_input_message(chat_id, message_id, message)
+            .await?;
+        info!(
+            "[{}] updated search results to page {} ({} results)",
+            self.id, page_num, result.total_results
+        );
+
         Ok(())
+    }
+
+    fn search_state_key(&self, chat_id: i64, message_id: i32) -> String {
+        format!("{}:search:{}:{}", self.id, chat_id, message_id)
+    }
+
+    async fn read_search_state(
+        &self,
+        chat_id: i64,
+        message_id: i32,
+    ) -> Result<Option<SearchState>> {
+        let key = self.search_state_key(chat_id, message_id);
+        let Some(raw) = self.storage.get(&key).await? else {
+            return Ok(None);
+        };
+        match serde_json::from_str::<SearchState>(&raw) {
+            Ok(state) => Ok(Some(state)),
+            Err(e) => {
+                warn!(
+                    "[{}] failed to parse search state at {}: {} (raw={:?})",
+                    self.id, key, e, raw
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    async fn write_search_state(
+        &self,
+        chat_id: i64,
+        message_id: i32,
+        state: &SearchState,
+    ) -> Result<()> {
+        let key = self.search_state_key(chat_id, message_id);
+        let raw = serde_json::to_string(state).map_err(|e| {
+            crate::types::Error::Config(format!("failed to encode search state: {e}"))
+        })?;
+        self.storage.set(&key, &raw).await
     }
 
     /// Handle chat selection
@@ -708,14 +794,24 @@ impl BotFrontend {
             self.id, query, chats
         );
 
+        let sort = SortMode::default();
+        let reverse = false;
+
         let start_time = Instant::now();
         let result = self
             .backend
-            .search(&query, chats.as_deref(), self.config.page_len, 1)
+            .search(
+                &query,
+                chats.as_deref(),
+                self.config.page_len,
+                1,
+                sort,
+                reverse,
+            )
             .await?;
         let used_time = start_time.elapsed().as_secs_f64();
 
-        let buttons = self.render_buttons(&result, 1);
+        let buttons = self.render_buttons(&result, 1, sort, reverse);
         let message = self
             .render_response_message(&result, used_time, buttons)
             .await?;
@@ -727,19 +823,15 @@ impl BotFrontend {
             self.id, result.total_results
         );
 
-        // Store query for pagination
-        let query_key = format!("{}:query_text:{}:{}", self.id, chat_id, sent_message_id);
-        self.storage.set(&query_key, &query).await?;
-
-        if let Some(chats_vec) = chats {
-            let chats_str = chats_vec
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let chats_key = format!("{}:query_chats:{}:{}", self.id, chat_id, sent_message_id);
-            self.storage.set(&chats_key, &chats_str).await?;
-        }
+        // Persist initial state for later pagination / sort / reverse callbacks
+        let state = SearchState {
+            query,
+            chats,
+            sort,
+            reverse,
+        };
+        self.write_search_state(chat_id, sent_message_id, &state)
+            .await?;
 
         Ok(())
     }
@@ -1322,11 +1414,13 @@ impl BotFrontend {
         reply_markup::inline(rows)
     }
 
-    /// Render pagination buttons
+    /// Render pagination + sort/reverse buttons
     fn render_buttons(
         &self,
         result: &SearchResult,
         cur_page_num: usize,
+        sort: SortMode,
+        reverse: bool,
     ) -> Vec<Vec<(String, String)>> {
         let total_pages = result.total_results.div_ceil(self.config.page_len);
 
@@ -1348,14 +1442,34 @@ impl BotFrontend {
             )
         };
 
-        vec![vec![
+        let pagination_row = vec![
             former,
             (
                 format!("{} / {}", cur_page_num, total_pages),
                 "".to_string(),
             ),
             next,
-        ]]
+        ];
+
+        // Sort button: label shows what pressing it switches TO,
+        // with the current mode in parens.
+        let sort_button = match sort {
+            SortMode::Time => (
+                "Sort by Relevance (by Time now)".to_string(),
+                "search_sort=relevance".to_string(),
+            ),
+            SortMode::Relevance => (
+                "Sort by Time (by Relevance now)".to_string(),
+                "search_sort=time".to_string(),
+            ),
+        };
+        let reverse_button = (
+            "Reverse".to_string(),
+            format!("search_reverse={}", if reverse { 0 } else { 1 }),
+        );
+        let action_row = vec![sort_button, reverse_button];
+
+        vec![pagination_row, action_row]
     }
 
     /// Send a message to a chat (static helper)

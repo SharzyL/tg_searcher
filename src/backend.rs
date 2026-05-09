@@ -23,7 +23,7 @@ use grammers_client::types::update::{MessageDeletion, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tg_searcher_index::{IndexMsg, Indexer, SearchResult};
+use tg_searcher_index::{IndexMsg, Indexer, SearchResult, SortMode};
 use tracing::{debug, error, info, warn};
 
 /// Backend bot for indexing messages
@@ -223,10 +223,12 @@ impl BackendBot {
         chats: Option<&[i64]>,
         page_len: usize,
         page_num: usize,
+        sort_mode: SortMode,
+        reverse: bool,
     ) -> Result<SearchResult> {
         Ok(self
             .indexer
-            .search(query, chats, page_len, page_num)
+            .search(query, chats, page_len, page_num, sort_mode, reverse)
             .await?)
     }
 
@@ -247,9 +249,7 @@ impl BackendBot {
     /// Check if index is empty (optionally for a specific chat)
     pub async fn is_empty(&self, chat_id: Option<i64>) -> Result<bool> {
         if let Some(chat_id) = chat_id {
-            // Check if specific chat has any documents
-            let results = self.indexer.search("*", Some(&[chat_id]), 1, 1).await?;
-            Ok(results.total_results == 0)
+            Ok(self.indexer.chat_doc_count(chat_id).await? == 0)
         } else {
             Ok(self.indexer.num_docs() == 0)
         }

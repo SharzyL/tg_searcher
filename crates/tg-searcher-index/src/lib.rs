@@ -1,27 +1,30 @@
-//! Full-text search indexer using Tantivy with Chinese tokenization
+//! Full-text search indexer using Tantivy with ICU-based tokenization.
 //!
-//! This crate provides a wrapper around Tantivy for indexing and searching
-//! Telegram messages with support for Chinese word segmentation via jieba.
+//! This crate wraps [`tantivy_analyzer_icu`] for indexing and searching
+//! Telegram messages with NFKC casefolding, ICU word break, diacritic
+//! folding and CJK bigram tokenization.
 //!
-//! The schema includes hardcoded fields: `content`, `url`, `chat_id`,
-//! `post_time`, and `sender`.
+//! The schema includes hardcoded fields:
+//! - `content` (ICU field group: stored + folded_bigram + unigram + diacritic)
+//! - `url`, `chat_id`, `post_time`, `sender`
 
-use chrono::{DateTime, Utc};
-use jieba_rs::Jieba;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
-use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tantivy::collector::{Count, TopDocs};
+use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
 use tantivy::schema::*;
-use tantivy::snippet::SnippetGenerator;
-use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, Term, doc};
+use tantivy_analyzer_icu::search::{ICUFieldGroup, ICUSearchConfig};
 use thiserror::Error;
 use tracing::warn;
+
+const SNIPPET_MAX_CHARS: usize = 100;
 
 // ── Error type ──────────────────────────────────────────────────────
 
@@ -78,6 +81,18 @@ pub struct SearchHit {
     pub snippet: HighlightedSnippet,
 }
 
+/// Sort criterion for search results.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortMode {
+    /// Order by `post_time` (newest first when `reverse=false`).
+    #[default]
+    Time,
+    /// Order by relevance score from `route_query`
+    /// (most relevant first when `reverse=false`).
+    Relevance,
+}
+
 /// Search results with pagination info.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
@@ -91,101 +106,20 @@ pub struct SearchResult {
     pub total_results: usize,
 }
 
-// ── Chinese tokenizer ───────────────────────────────────────────────
-
-/// Chinese tokenizer using jieba.
-#[derive(Clone)]
-pub struct ChineseTokenizer {
-    jieba: Arc<Jieba>,
-}
-
-impl ChineseTokenizer {
-    pub fn new() -> Self {
-        Self {
-            jieba: Arc::new(Jieba::new()),
-        }
-    }
-}
-
-impl Default for ChineseTokenizer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Tokenizer for ChineseTokenizer {
-    type TokenStream<'a> = ChineseTokenStream<'a>;
-
-    fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
-        ChineseTokenStream::new(text, self.jieba.clone())
-    }
-}
-
-/// Token stream for Chinese text.
-pub struct ChineseTokenStream<'a> {
-    tokens: Vec<Token>,
-    index: usize,
-    _text: &'a str,
-}
-
-impl<'a> ChineseTokenStream<'a> {
-    fn new(text: &'a str, jieba: Arc<Jieba>) -> Self {
-        let words = jieba.cut(text, false);
-        let mut tokens = Vec::new();
-        let mut byte_offset = 0;
-
-        for (position, word) in words.into_iter().enumerate() {
-            let word_bytes = word.len();
-            let token = Token {
-                offset_from: byte_offset,
-                offset_to: byte_offset + word_bytes,
-                position,
-                text: word.to_string(),
-                position_length: 1,
-            };
-            tokens.push(token);
-            byte_offset += word_bytes;
-        }
-
-        Self {
-            tokens,
-            index: 0,
-            _text: text,
-        }
-    }
-}
-
-impl TokenStream for ChineseTokenStream<'_> {
-    fn advance(&mut self) -> bool {
-        if self.index < self.tokens.len() {
-            self.index += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn token(&self) -> &Token {
-        &self.tokens[self.index - 1]
-    }
-
-    fn token_mut(&mut self) -> &mut Token {
-        &mut self.tokens[self.index - 1]
-    }
-}
-
 // ── Indexer ─────────────────────────────────────────────────────────
 
 /// Full-text search indexer for Telegram messages.
 pub struct Indexer {
+    #[allow(dead_code)]
     index: Index,
     writer: Arc<RwLock<IndexWriter>>,
     reader: IndexReader,
     fields: IndexFields,
+    icu: ICUSearchConfig,
 }
 
 struct IndexFields {
-    content: Field,
+    content: ICUFieldGroup,
     url: Field,
     chat_id: Field,
     post_time: Field,
@@ -197,23 +131,28 @@ impl Indexer {
     pub async fn new(index_dir: &Path, from_scratch: bool) -> Result<Self> {
         tokio::fs::create_dir_all(index_dir).await?;
 
-        let schema = Self::build_schema();
+        let icu = ICUSearchConfig {
+            max_snippet_chars: SNIPPET_MAX_CHARS,
+        };
 
         if from_scratch && index_dir.join("meta.json").exists() {
             tokio::fs::remove_dir_all(index_dir).await?;
             tokio::fs::create_dir_all(index_dir).await?;
         }
 
-        let index = if index_dir.join("meta.json").exists() {
-            Index::open_in_dir(index_dir).map_err(|e| Error::Index(e.to_string()))?
+        let (index, fields) = if index_dir.join("meta.json").exists() {
+            let index = Index::open_in_dir(index_dir).map_err(|e| Error::Index(e.to_string()))?;
+            let schema = index.schema();
+            let fields = IndexFields::from_schema(&schema)?;
+            (index, fields)
         } else {
-            Index::create_in_dir(index_dir, schema.clone())
-                .map_err(|e| Error::Index(e.to_string()))?
+            let (schema, fields) = Self::build_schema(&icu);
+            let index =
+                Index::create_in_dir(index_dir, schema).map_err(|e| Error::Index(e.to_string()))?;
+            (index, fields)
         };
 
-        index
-            .tokenizers()
-            .register("jieba", ChineseTokenizer::new());
+        icu.register_analyzers(&index);
 
         let writer = index
             .writer(50_000_000)
@@ -225,52 +164,56 @@ impl Indexer {
             .try_into()
             .map_err(|e| Error::Index(e.to_string()))?;
 
-        let fields = IndexFields {
-            content: schema.get_field("content").unwrap(),
-            url: schema.get_field("url").unwrap(),
-            chat_id: schema.get_field("chat_id").unwrap(),
-            post_time: schema.get_field("post_time").unwrap(),
-            sender: schema.get_field("sender").unwrap(),
-        };
-
         Ok(Self {
             index,
             writer: Arc::new(RwLock::new(writer)),
             reader,
             fields,
+            icu,
         })
     }
 
-    fn build_schema() -> Schema {
+    fn build_schema(icu: &ICUSearchConfig) -> (Schema, IndexFields) {
         let mut schema_builder = Schema::builder();
 
-        let text_options = TextOptions::default()
-            .set_indexing_options(
-                TextFieldIndexing::default()
-                    .set_tokenizer("jieba")
-                    .set_index_option(IndexRecordOption::WithFreqsAndPositions),
-            )
-            .set_stored();
-        schema_builder.add_text_field("content", text_options);
+        let content = icu.add_field_group(&mut schema_builder, "content");
+        let url = schema_builder.add_text_field("url", STRING | STORED);
+        let chat_id = schema_builder.add_i64_field("chat_id", INDEXED | STORED);
+        let post_time = schema_builder.add_date_field("post_time", STORED | FAST);
+        let sender = schema_builder.add_text_field("sender", STORED);
 
-        schema_builder.add_text_field("url", STRING | STORED);
-        schema_builder.add_i64_field("chat_id", INDEXED | STORED);
-        schema_builder.add_date_field("post_time", STORED | FAST);
-        schema_builder.add_text_field("sender", STORED);
+        let schema = schema_builder.build();
+        let fields = IndexFields {
+            content,
+            url,
+            chat_id,
+            post_time,
+            sender,
+        };
+        (schema, fields)
+    }
 
-        schema_builder.build()
+    /// Build a tantivy document for a single [`IndexMsg`].
+    ///
+    /// Fans out the content text to all four ICU fields (stored, folded_bigram,
+    /// unigram, diacritic).
+    fn make_doc(&self, msg: &IndexMsg) -> tantivy::TantivyDocument {
+        doc!(
+            self.fields.content.stored => msg.content.as_str(),
+            self.fields.content.folded_bigram => msg.content.as_str(),
+            self.fields.content.unigram => msg.content.as_str(),
+            self.fields.content.diacritic => msg.content.as_str(),
+            self.fields.url => msg.url.as_str(),
+            self.fields.chat_id => msg.chat_id,
+            self.fields.post_time => tantivy::DateTime::from_timestamp_secs(msg.post_time.timestamp()),
+            self.fields.sender => msg.sender.as_str(),
+        )
     }
 
     /// Add a document to the index.
     pub async fn add_document(&self, msg: IndexMsg) -> Result<()> {
         let url_term = Term::from_field_text(self.fields.url, &msg.url);
-        let doc = doc!(
-            self.fields.content => msg.content,
-            self.fields.url => msg.url,
-            self.fields.chat_id => msg.chat_id,
-            self.fields.post_time => tantivy::DateTime::from_timestamp_secs(msg.post_time.timestamp()),
-            self.fields.sender => msg.sender,
-        );
+        let doc = self.make_doc(&msg);
 
         let mut writer = self.writer.write().unwrap();
         writer.delete_term(url_term);
@@ -301,13 +244,7 @@ impl Indexer {
 
         for (_, msg) in by_url {
             writer.delete_term(Term::from_field_text(self.fields.url, &msg.url));
-            let doc = doc!(
-                self.fields.content => msg.content,
-                self.fields.url => msg.url,
-                self.fields.chat_id => msg.chat_id,
-                self.fields.post_time => tantivy::DateTime::from_timestamp_secs(msg.post_time.timestamp()),
-                self.fields.sender => msg.sender,
-            );
+            let doc = self.make_doc(&msg);
             writer
                 .add_document(doc)
                 .map_err(|e| Error::Index(e.to_string()))?;
@@ -353,7 +290,10 @@ impl Indexer {
                 .to_string();
 
             let updated_doc = doc!(
-                self.fields.content => content,
+                self.fields.content.stored => content,
+                self.fields.content.folded_bigram => content,
+                self.fields.content.unigram => content,
+                self.fields.content.diacritic => content,
                 self.fields.url => url,
                 self.fields.chat_id => chat_id,
                 self.fields.post_time => post_time,
@@ -411,12 +351,14 @@ impl Indexer {
         in_chats: Option<&[i64]>,
         page_len: usize,
         page_num: usize,
+        sort_mode: SortMode,
+        reverse: bool,
     ) -> Result<SearchResult> {
         let searcher = self.reader.searcher();
 
-        let query_parser = QueryParser::for_index(&self.index, vec![self.fields.content]);
-        let mut query = query_parser
-            .parse_query(query_str)
+        let mut query: Box<dyn Query> = self
+            .icu
+            .route_query(&searcher, &self.fields.content, query_str)
             .map_err(|e| Error::Index(e.to_string()))?;
 
         if let Some(chats) = in_chats {
@@ -424,49 +366,74 @@ impl Indexer {
                 .iter()
                 .map(|&chat_id| {
                     let term = Term::from_field_i64(self.fields.chat_id, chat_id);
-                    let query: Box<dyn Query> =
+                    let q: Box<dyn Query> =
                         Box::new(TermQuery::new(term, IndexRecordOption::Basic));
-                    (Occur::Should, query)
+                    (Occur::Should, q)
                 })
                 .collect();
 
             let chat_filter = BooleanQuery::new(chat_queries);
 
             let combined_query = BooleanQuery::new(vec![
-                (Occur::Must, Box::new(query)),
+                (Occur::Must, query),
                 (Occur::Must, Box::new(chat_filter)),
             ]);
             query = Box::new(combined_query);
         }
 
         let offset = (page_num - 1) * page_len;
+        let to_idx_err = |e: tantivy::TantivyError| Error::Index(e.to_string());
 
-        let collector = TopDocs::with_limit(page_len)
-            .and_offset(offset)
-            .order_by_fast_field::<tantivy::DateTime>("post_time", tantivy::Order::Desc);
+        let doc_addresses: Vec<tantivy::DocAddress> = match (sort_mode, reverse) {
+            (SortMode::Time, rev) => {
+                let order = if rev {
+                    tantivy::Order::Asc
+                } else {
+                    tantivy::Order::Desc
+                };
+                let collector = TopDocs::with_limit(page_len)
+                    .and_offset(offset)
+                    .order_by_fast_field::<tantivy::DateTime>("post_time", order);
+                searcher
+                    .search(&query, &collector)
+                    .map_err(to_idx_err)?
+                    .into_iter()
+                    .map(|(_dt, addr)| addr)
+                    .collect()
+            }
+            (SortMode::Relevance, false) => {
+                let collector = TopDocs::with_limit(page_len)
+                    .and_offset(offset)
+                    .order_by_score();
+                searcher
+                    .search(&query, &collector)
+                    .map_err(to_idx_err)?
+                    .into_iter()
+                    .map(|(_score, addr)| addr)
+                    .collect()
+            }
+            (SortMode::Relevance, true) => {
+                let collector = TopDocs::with_limit(page_len)
+                    .and_offset(offset)
+                    .tweak_score(|_seg: &tantivy::SegmentReader| {
+                        |_doc: tantivy::DocId, score: tantivy::Score| -> tantivy::Score { -score }
+                    });
+                let raw: Vec<(tantivy::Score, tantivy::DocAddress)> =
+                    searcher.search(&query, &collector).map_err(to_idx_err)?;
+                raw.into_iter().map(|(_neg, addr)| addr).collect()
+            }
+        };
 
-        let top_docs = searcher
-            .search(&query, &collector)
-            .map_err(|e| Error::Index(e.to_string()))?;
-
-        let count_collector = tantivy::collector::Count;
-        let total_results = searcher
-            .search(&query, &count_collector)
-            .map_err(|e| Error::Index(e.to_string()))?;
-
-        let mut snippet_generator =
-            SnippetGenerator::create(&searcher, &*query, self.fields.content)
-                .map_err(|e| Error::Index(e.to_string()))?;
-        snippet_generator.set_max_num_chars(100);
+        let total_results = searcher.search(&query, &Count).map_err(to_idx_err)?;
 
         let mut hits = Vec::new();
-        for (_score, doc_address) in top_docs {
+        for doc_address in doc_addresses {
             let doc: tantivy::TantivyDocument = searcher
                 .doc(doc_address)
                 .map_err(|e| Error::Index(e.to_string()))?;
 
             let content = html_escape::decode_html_entities(
-                doc.get_first(self.fields.content)
+                doc.get_first(self.fields.content.stored)
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
             )
@@ -493,7 +460,9 @@ impl Indexer {
                 .unwrap_or("")
                 .to_string();
 
-            let snippet = snippet_generator.snippet(&content);
+            let icu_snippet = self
+                .icu
+                .snippet(&searcher, &*query, &self.fields.content, &content);
 
             let msg = IndexMsg {
                 content: content.clone(),
@@ -502,21 +471,21 @@ impl Indexer {
                 post_time,
                 sender,
             };
-            let snippet_data = if snippet.fragment().is_empty() && !content.is_empty() {
+            let snippet_data = if icu_snippet.highlights.is_empty() && !content.is_empty() {
                 warn!(
                     url = %msg.url,
-                    "Empty snippet for non-empty content: {:?}",
-                    content.chars().take(100).collect::<String>(),
+                    "Empty snippet highlights for non-empty content: {:?}",
+                    content.chars().take(SNIPPET_MAX_CHARS).collect::<String>(),
                 );
-                let truncated: String = content.chars().take(100).collect();
+                let truncated: String = content.chars().take(SNIPPET_MAX_CHARS).collect();
                 HighlightedSnippet {
                     fragment: truncated,
                     highlights: vec![],
                 }
             } else {
                 HighlightedSnippet {
-                    fragment: snippet.fragment().to_string(),
-                    highlights: snippet.highlighted().to_vec(),
+                    fragment: icu_snippet.fragment,
+                    highlights: icu_snippet.highlights,
                 }
             };
 
@@ -538,6 +507,16 @@ impl Indexer {
     /// Total number of documents in the index (O(1)).
     pub fn num_docs(&self) -> u64 {
         self.reader.searcher().num_docs()
+    }
+
+    /// Number of documents indexed for a specific chat.
+    pub async fn chat_doc_count(&self, chat_id: i64) -> Result<usize> {
+        let searcher = self.reader.searcher();
+        let term = Term::from_field_i64(self.fields.chat_id, chat_id);
+        let query = TermQuery::new(term, IndexRecordOption::Basic);
+        searcher
+            .search(&query, &Count)
+            .map_err(|e| Error::Index(e.to_string()))
     }
 
     /// List all indexed chat IDs.
@@ -613,7 +592,7 @@ impl Indexer {
             .map_err(|e| Error::Index(e.to_string()))?;
 
         let content = doc
-            .get_first(self.fields.content)
+            .get_first(self.fields.content.stored)
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -649,6 +628,29 @@ impl Indexer {
     }
 }
 
+impl IndexFields {
+    fn from_schema(schema: &Schema) -> Result<Self> {
+        let lookup = |name: &str| -> Result<Field> {
+            schema
+                .get_field(name)
+                .map_err(|e| Error::Index(format!("missing field {name}: {e}")))
+        };
+        let content = ICUFieldGroup {
+            stored: lookup("content")?,
+            folded_bigram: lookup("content_folded_bigram")?,
+            unigram: lookup("content_unigram")?,
+            diacritic: lookup("content_diacritic")?,
+        };
+        Ok(IndexFields {
+            content,
+            url: lookup("url")?,
+            chat_id: lookup("chat_id")?,
+            post_time: lookup("post_time")?,
+            sender: lookup("sender")?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,7 +672,10 @@ mod tests {
 
         indexer.add_document(msg.clone()).await.unwrap();
 
-        let results = indexer.search("test", None, 10, 1).await.unwrap();
+        let results = indexer
+            .search("test", None, 10, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 1);
         assert_eq!(results.hits[0].msg.content, msg.content);
     }
@@ -695,14 +700,20 @@ mod tests {
             .await
             .unwrap();
 
-        let results = indexer.search("updated", None, 10, 1).await.unwrap();
+        let results = indexer
+            .search("updated", None, 10, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 1);
 
         indexer
             .delete_document("https://t.me/c/123/456")
             .await
             .unwrap();
-        let results = indexer.search("updated", None, 10, 1).await.unwrap();
+        let results = indexer
+            .search("updated", None, 10, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 0);
     }
 
@@ -735,10 +746,12 @@ mod tests {
             .await
             .unwrap();
 
-        let results = indexer.search("*", None, 10, 1).await.unwrap();
-        assert_eq!(results.total_results, 1);
+        assert_eq!(indexer.num_docs(), 1);
 
-        let results = indexer.search("second", None, 10, 1).await.unwrap();
+        let results = indexer
+            .search("second", None, 10, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 1);
         assert_eq!(results.hits[0].msg.url, url);
     }
@@ -760,7 +773,7 @@ mod tests {
         }
 
         let results = indexer
-            .search("message", Some(&[100, 200]), 10, 1)
+            .search("message", Some(&[100, 200]), 10, 1, SortMode::Time, false)
             .await
             .unwrap();
         assert_eq!(results.total_results, 2);
@@ -801,10 +814,40 @@ mod tests {
         };
         indexer.add_document(msg).await.unwrap();
 
-        let results = indexer.search("人", None, 10, 1).await.unwrap();
+        let results = indexer
+            .search("人", None, 10, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 1);
         assert!(results.hits[0].snippet.fragment.contains("人"));
         assert!(!results.hits[0].snippet.highlights.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_chat_doc_count() {
+        let temp_dir = TempDir::new().unwrap();
+        let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
+
+        for chat_id in [100, 100, 100, 200] {
+            indexer
+                .add_document(IndexMsg {
+                    content: "x".to_string(),
+                    url: format!(
+                        "https://t.me/c/{}/{}",
+                        chat_id,
+                        rand::random::<u32>() // unique url per insert
+                    ),
+                    chat_id,
+                    post_time: Utc::now(),
+                    sender: "U".to_string(),
+                })
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(indexer.chat_doc_count(100).await.unwrap(), 3);
+        assert_eq!(indexer.chat_doc_count(200).await.unwrap(), 1);
+        assert_eq!(indexer.chat_doc_count(999).await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -825,26 +868,32 @@ mod tests {
             }
         }
 
-        let results = indexer.search("message", None, 100, 1).await.unwrap();
+        let results = indexer
+            .search("message", None, 100, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 15);
 
         indexer.delete_chat_documents(200).await.unwrap();
 
         let results = indexer
-            .search("message", Some(&[200]), 100, 1)
+            .search("message", Some(&[200]), 100, 1, SortMode::Time, false)
             .await
             .unwrap();
         assert_eq!(results.total_results, 0);
 
         let results = indexer
-            .search("message", Some(&[100, 300]), 100, 1)
+            .search("message", Some(&[100, 300]), 100, 1, SortMode::Time, false)
             .await
             .unwrap();
         assert_eq!(results.total_results, 10);
 
         indexer.delete_chat_documents(100).await.unwrap();
 
-        let results = indexer.search("message", None, 100, 1).await.unwrap();
+        let results = indexer
+            .search("message", None, 100, 1, SortMode::Time, false)
+            .await
+            .unwrap();
         assert_eq!(results.total_results, 5);
     }
 }
