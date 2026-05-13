@@ -158,6 +158,27 @@ mod tests {
         assert_eq!(texts(&tokens), &["hello", "你", "好"]);
     }
 
+    // --- Southeast Asian dictionary segmentation ---
+
+    #[test]
+    fn thai_dictionary_segmented_not_unigram() {
+        // Thai goes through ICU's dictionary engine, not CJK unigram expansion.
+        let tokens = collect_tokens("ภาษาไทย");
+        assert_eq!(texts(&tokens), &["ภาษา", "ไทย"]);
+    }
+
+    #[test]
+    fn khmer_dictionary_segmented() {
+        let tokens = collect_tokens("ខ្ញុំស្រលាញ់ភាសាខ្មែរ");
+        assert_eq!(texts(&tokens), &["ខ្ញុំ", "ស្រលាញ់", "ភាសាខ្មែរ"]);
+    }
+
+    #[test]
+    fn mixed_thai_cjk_latin() {
+        let tokens = collect_tokens("Hello สวัสดี 你好 world");
+        assert_eq!(texts(&tokens), &["hello", "สวัสดี", "你", "好", "world"]);
+    }
+
     // --- Signature test ---
 
     #[test]

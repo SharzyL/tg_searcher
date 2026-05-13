@@ -161,6 +161,39 @@ mod tests {
     }
 
     #[test]
+    fn word_break_thai_dictionary() {
+        // Thai has no spaces between words; ICU's dictionary engine
+        // (thaidict) is engaged via $ComplexContext in the RBBI rules.
+        assert_eq!(break_texts("ภาษาไทย"), &["ภาษา", "ไทย"]);
+        assert_eq!(break_texts("สวัสดีครับ"), &["สวัสดี", "ครับ"]);
+        assert_eq!(break_texts("ขอบคุณมาก"), &["ขอบคุณ", "มาก"]);
+    }
+
+    #[test]
+    fn word_break_khmer_dictionary() {
+        assert_eq!(break_texts("ខ្ញុំស្រលាញ់ភាសាខ្មែរ"), &["ខ្ញុំ", "ស្រលាញ់", "ភាសាខ្មែរ"]);
+    }
+
+    #[test]
+    fn word_break_lao_dictionary() {
+        assert_eq!(break_texts("ສະບາຍດີຊາວໂລກ"), &["ສະບາຍດີ", "ຊາວໂລກ"]);
+    }
+
+    #[test]
+    fn word_break_burmese_dictionary() {
+        assert_eq!(break_texts("မင်္ဂလာပါ"), &["မင်္ဂလာ", "ပါ"]);
+    }
+
+    #[test]
+    fn word_break_mixed_thai_cjk_latin() {
+        // CJK already splits per-char at the RBBI level (dictionary break disabled).
+        assert_eq!(
+            break_texts("Hello สวัสดี 你好 world"),
+            &["Hello", "สวัสดี", "你", "好", "world"]
+        );
+    }
+
+    #[test]
     fn word_break_emoji() {
         let text = "hello🎉world";
         let tokens = break_texts(text);
