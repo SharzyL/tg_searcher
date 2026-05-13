@@ -55,9 +55,17 @@ async fn main() -> Result<()> {
     }
 
     // Load configuration
-    let config = config::Config::from_file(&args.config)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    let config = match config::Config::from_file(&args.config).await {
+        Ok(c) => c,
+        Err(types::Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            error!("Config file not found: {:?}", args.config);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            error!("Failed to load config {:?}: {}", args.config, e);
+            std::process::exit(1);
+        }
+    };
 
     // Ensure directories exist
     config

@@ -21,10 +21,21 @@ use grammers_client::client::UpdatesConfiguration;
 use grammers_client::types::update::Message as UpdateMessage; // Update message type
 use grammers_client::types::update::{MessageDeletion, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tg_searcher_index::{IndexMsg, Indexer, SearchResult, SortMode};
+use tokio::sync::{Mutex, watch};
 use tracing::{debug, error, info, warn};
+
+/// Per-chat result of the startup catch-up. Reported to the frontend so the
+/// admin can see what (if anything) was downloaded for each monitored chat.
+#[derive(Debug, Clone)]
+pub struct CatchupSummary {
+    pub chat_id: i64,
+    pub indexed_count: usize,
+    pub min_msg_id: i32,
+    pub max_msg_id: i32,
+}
 
 /// Backend bot for indexing messages
 pub struct BackendBot {
@@ -51,6 +62,21 @@ pub struct BackendBot {
 
     /// Track newest message per chat
     newest_msg: Arc<DashMap<i64, IndexMsg>>,
+
+    /// Per-chat catch-up state. Presence in map ⇒ chat is mid-catch-up;
+    /// vec accumulates msg_ids whose deletions arrived during catch-up
+    /// and must be replayed once catch-up commits writes for that chat.
+    catchup_state: Arc<Mutex<HashMap<i64, Vec<i32>>>>,
+
+    /// Set to `true` once `run_catchup` has finished. Backed by a watch
+    /// channel so frontends can `wait_for(|&v| v)` regardless of whether
+    /// they subscribe before or after catch-up completes.
+    catchup_done_tx: watch::Sender<bool>,
+
+    /// Per-chat summaries populated by `catch_up_chat` (only chats that
+    /// actually had new messages indexed). Read by the frontend after the
+    /// `catchup_done_tx` signal fires.
+    catchup_results: Arc<Mutex<Vec<CatchupSummary>>>,
 
     /// Configuration
     monitor_all: bool,
@@ -88,6 +114,9 @@ impl BackendBot {
             monitored_chats,
             excluded_chats,
             newest_msg: Arc::new(DashMap::new()),
+            catchup_state: Arc::new(Mutex::new(HashMap::new())),
+            catchup_done_tx: watch::channel(false).0,
+            catchup_results: Arc::new(Mutex::new(Vec::new())),
             monitor_all: config.config.monitor_all,
         })
     }
@@ -147,6 +176,23 @@ impl BackendBot {
         );
 
         info!("[{}] streaming updates, waiting for messages...", self.id);
+
+        // Run catch-up concurrently with the live update loop. Catch-up writes
+        // commit first; deletes that arrive while a chat is catching up are
+        // buffered (see handle_message_deleted) and replayed once that chat's
+        // catch-up finishes, so they cannot be silently lost.
+        tokio::try_join!(self.run_catchup(), self.run_main_loop(&mut updates))?;
+
+        warn!("[{}] event loop exited", self.id);
+        Ok(())
+    }
+
+    /// Main update-stream loop. Extracted from `run()` so catch-up can run
+    /// concurrently via `tokio::try_join!`.
+    async fn run_main_loop(
+        &self,
+        updates: &mut grammers_client::client::updates::UpdateStream,
+    ) -> Result<()> {
         loop {
             let update = match updates.next().await {
                 Ok(update) => update,
@@ -212,8 +258,107 @@ impl BackendBot {
             }
         }
 
-        warn!("[{}] event loop exited", self.id);
         Ok(())
+    }
+
+    /// Startup catch-up: for every monitored chat with prior indexed messages,
+    /// download anything created after the latest indexed msg_id. Runs
+    /// sequentially across chats to avoid Telegram flood-waits.
+    async fn run_catchup(&self) -> Result<()> {
+        let chats: Vec<i64> = self.monitored_chats.iter().map(|e| *e.key()).collect();
+        let chat_count = chats.len();
+        info!("[{}] catch-up starting for {} chat(s)", self.id, chat_count);
+        for chat_id in chats {
+            if let Err(e) = self.catch_up_chat(chat_id).await {
+                warn!("[{}] catch-up failed for chat {}: {}", self.id, chat_id, e);
+            }
+        }
+        info!("[{}] catch-up done", self.id);
+        let _ = self.catchup_done_tx.send(true);
+        Ok(())
+    }
+
+    /// Subscribe to the "catch-up complete" signal. The watch receiver is
+    /// `false` until startup catch-up finishes, then `true`. Use
+    /// `rx.wait_for(|&v| v).await` to await completion regardless of
+    /// subscription timing.
+    pub fn catchup_done_receiver(&self) -> watch::Receiver<bool> {
+        self.catchup_done_tx.subscribe()
+    }
+
+    /// Per-chat catch-up summaries collected during the startup pass.
+    /// Empty if no chat received new messages.
+    pub async fn catchup_results(&self) -> Vec<CatchupSummary> {
+        self.catchup_results.lock().await.clone()
+    }
+
+    /// Catch up a single chat: download messages newer than the latest
+    /// indexed one, while buffering any deletions that arrive concurrently
+    /// from the live update stream.
+    async fn catch_up_chat(&self, chat_id: i64) -> Result<()> {
+        let share_id = get_share_id(chat_id);
+        let Some(latest) = self.indexer.latest_msg_id(share_id).await? else {
+            // Chat is monitored but has no indexed messages yet — nothing to
+            // catch up to.
+            return Ok(());
+        };
+
+        // Open the deletion buffer atomically.
+        self.catchup_state.lock().await.insert(share_id, Vec::new());
+
+        let download_result = self
+            .download_history::<fn(DownloadProgress)>(share_id, Some(latest + 1), None, None)
+            .await;
+
+        // Always close the buffer, even on download error, to avoid leaking
+        // pending deletes.
+        let pending = self
+            .catchup_state
+            .lock()
+            .await
+            .remove(&share_id)
+            .unwrap_or_default();
+
+        match &download_result {
+            Ok(r) => {
+                info!(
+                    "[{}] catch-up indexed {} msg(s) for chat {} (msg_id range {}..{})",
+                    self.id, r.indexed_count, share_id, r.min_msg_id, r.max_msg_id
+                );
+                if r.indexed_count > 0 {
+                    self.catchup_results.lock().await.push(CatchupSummary {
+                        chat_id: share_id,
+                        indexed_count: r.indexed_count,
+                        min_msg_id: r.min_msg_id,
+                        max_msg_id: r.max_msg_id,
+                    });
+                }
+            }
+            Err(e) => warn!(
+                "[{}] catch-up download failed for chat {}: {}",
+                self.id, share_id, e
+            ),
+        }
+
+        if !pending.is_empty() {
+            info!(
+                "[{}] applying {} buffered deletion(s) for chat {}",
+                self.id,
+                pending.len(),
+                share_id
+            );
+            for msg_id in pending {
+                let url = format!("https://t.me/c/{}/{}", share_id, msg_id);
+                if let Err(e) = self.indexer.delete_document(&url).await {
+                    warn!(
+                        "[{}] buffered delete failed (msg {} chat {}): {}",
+                        self.id, msg_id, share_id, e
+                    );
+                }
+            }
+        }
+
+        download_result.map(|_| ())
     }
 
     /// Search messages
@@ -322,11 +467,6 @@ impl BackendBot {
         let mut fetched_max_msg_id: i32 = 0;
         let mut fetched_min_msg_id: i32 = 0;
 
-        info!(
-            "[{}] fetching messages from chat {} (streaming fetch + index)...",
-            self.id, share_id
-        );
-
         while let Some(message) = message_iter.next().await.map_err(|e| {
             crate::types::Error::Telegram(format!("Failed to iterate messages: {}", e))
         })? {
@@ -354,10 +494,6 @@ impl BackendBot {
             if let Some(ref callback) = progress_callback
                 && fetched_count.is_multiple_of(FETCH_PROGRESS_BATCH_SIZE)
             {
-                info!(
-                    "[{}] fetched {} messages from chat {}",
-                    self.id, fetched_count, share_id
-                );
                 callback(DownloadProgress {
                     downloaded: fetched_count,
                     chat_id: share_id,
@@ -397,10 +533,6 @@ impl BackendBot {
                 if batch.len() >= DOWNLOAD_BATCH_SIZE {
                     self.indexer.add_documents_batch(batch).await?;
                     batch = Vec::new();
-                    info!(
-                        "[{}] indexed {} messages from chat {} (up to msg_id {})",
-                        self.id, indexed_count, share_id, msg_id
-                    );
                 }
             }
         }
@@ -732,6 +864,24 @@ impl BackendBot {
     async fn handle_message_deleted(&self, deletion: MessageDeletion) -> Result<()> {
         let share_id = get_share_id(deletion.channel_id().unwrap());
         let msg_ids = deletion.messages();
+
+        // If catch-up is in progress for this chat, buffer the deletes and
+        // let `catch_up_chat` replay them after its writes commit. Otherwise
+        // a delete arriving before catch-up indexes msg X would be a no-op
+        // and X would later be re-added as a zombie.
+        {
+            let mut g = self.catchup_state.lock().await;
+            if let Some(buf) = g.get_mut(&share_id) {
+                buf.extend(msg_ids.iter().copied());
+                debug!(
+                    "[{}] buffered {} pending delete(s) for chat {} (catch-up in progress)",
+                    self.id,
+                    msg_ids.len(),
+                    share_id
+                );
+                return Ok(());
+            }
+        } // drop lock before awaiting indexer
 
         for msg_id in msg_ids {
             let url = format!("https://t.me/c/{}/{}", share_id, msg_id);

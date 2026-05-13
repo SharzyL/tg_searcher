@@ -260,6 +260,58 @@ impl BotFrontend {
             });
         }
 
+        // Notify admin once startup catch-up finishes.
+        {
+            let backend = Arc::clone(&self.backend);
+            let admin_id = self.admin_id;
+            let client = self.client.clone();
+            let frontend_id = self.id.clone();
+            tokio::spawn(async move {
+                let mut rx = backend.catchup_done_receiver();
+                if rx.wait_for(|&v| v).await.is_err() {
+                    // Sender dropped before signalling — backend gone, nothing to report.
+                    return;
+                }
+                let chat_count = backend.monitored_chats_count();
+                let results = backend.catchup_results().await;
+                let msg = if results.is_empty() {
+                    format!(
+                        "✅ Startup catch-up complete ({} monitored chat(s) checked, no new messages).",
+                        chat_count
+                    )
+                } else {
+                    let total: usize = results.iter().map(|r| r.indexed_count).sum();
+                    let mut lines = Vec::with_capacity(results.len() + 2);
+                    lines.push(format!(
+                        "✅ Startup catch-up complete: {} new msg(s) across {}/{} chat(s).",
+                        total,
+                        results.len(),
+                        chat_count
+                    ));
+                    for r in &results {
+                        let name = match backend.format_dialog_html(r.chat_id).await {
+                            Ok(s) => s,
+                            Err(_) => format!("chat {}", r.chat_id),
+                        };
+                        lines.push(format!(
+                            "• {}: {} msg (msg_id {}..{})",
+                            name, r.indexed_count, r.min_msg_id, r.max_msg_id
+                        ));
+                    }
+                    lines.join("\n")
+                };
+                if let Some(client) = client
+                    && let Err(e) =
+                        Self::send_message_with_client(&client, admin_id, &msg, None).await
+                {
+                    warn!(
+                        "[{}] failed to send catch-up complete notice to admin: {}",
+                        frontend_id, e
+                    );
+                }
+            });
+        }
+
         // Create update stream using the stored client
         let client_ref = self.client.as_ref().unwrap();
         let mut updates = client_ref.stream_updates(
@@ -975,9 +1027,17 @@ impl BotFrontend {
             callback_task.await?;
 
             // Edit final message with completion status
+            let chat_name = self.backend.translate_chat_id(target_chat_id).await?;
+            let escaped_name = html_escape::encode_text(&chat_name);
             let response = format!(
-                "✅ Downloaded {} messages from chat {} (msg_id {}..{})",
-                result.indexed_count, target_chat_id, result.min_msg_id, result.max_msg_id
+                "✅ Downloaded {} messages from chat {} (msg_id {}..{})\n\
+                 Start monitoring {} (id={})",
+                result.indexed_count,
+                target_chat_id,
+                result.min_msg_id,
+                result.max_msg_id,
+                escaped_name,
+                target_chat_id,
             );
             self.edit_message(chat_id, progress_msg_id, &response, None)
                 .await?;

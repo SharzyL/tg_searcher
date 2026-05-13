@@ -126,6 +126,10 @@ struct IndexFields {
     sender: Field,
 }
 
+fn parse_msg_id_from_url(url: &str) -> Option<i32> {
+    url.rsplit('/').next()?.parse().ok()
+}
+
 impl Indexer {
     /// Create or open an index at the given directory.
     pub async fn new(index_dir: &Path, from_scratch: bool) -> Result<Self> {
@@ -519,6 +523,33 @@ impl Indexer {
             .map_err(|e| Error::Index(e.to_string()))
     }
 
+    /// Largest indexed msg_id for the given chat (by `post_time`, descending),
+    /// extracted from the document's stored URL. `None` if the chat has no
+    /// indexed documents.
+    pub async fn latest_msg_id(&self, chat_id: i64) -> Result<Option<i32>> {
+        let searcher = self.reader.searcher();
+        let query = TermQuery::new(
+            Term::from_field_i64(self.fields.chat_id, chat_id),
+            IndexRecordOption::Basic,
+        );
+        let collector = TopDocs::with_limit(1)
+            .order_by_fast_field::<tantivy::DateTime>("post_time", tantivy::Order::Desc);
+        let docs = searcher
+            .search(&query, &collector)
+            .map_err(|e| Error::Index(e.to_string()))?;
+        let Some((_, addr)) = docs.first() else {
+            return Ok(None);
+        };
+        let doc: tantivy::TantivyDocument = searcher
+            .doc(*addr)
+            .map_err(|e| Error::Index(e.to_string()))?;
+        let url = doc
+            .get_first(self.fields.url)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        Ok(parse_msg_id_from_url(url))
+    }
+
     /// List all indexed chat IDs.
     pub async fn list_indexed_chats(&self) -> Result<Vec<i64>> {
         let searcher = self.reader.searcher();
@@ -895,5 +926,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.total_results, 5);
+    }
+
+    #[tokio::test]
+    async fn test_latest_msg_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let indexer = Indexer::new(temp_dir.path(), true).await.unwrap();
+
+        assert_eq!(indexer.latest_msg_id(123).await.unwrap(), None);
+
+        let base = Utc::now();
+        for (msg_id, secs) in [(10, 0_i64), (42, 100), (7, 50)] {
+            indexer
+                .add_document(IndexMsg {
+                    content: format!("msg {}", msg_id),
+                    url: format!("https://t.me/c/123/{}", msg_id),
+                    chat_id: 123,
+                    post_time: base + chrono::Duration::seconds(secs),
+                    sender: "U".to_string(),
+                })
+                .await
+                .unwrap();
+        }
+        // Different chat shouldn't influence chat 123's result.
+        indexer
+            .add_document(IndexMsg {
+                content: "other".to_string(),
+                url: "https://t.me/c/999/9999".to_string(),
+                chat_id: 999,
+                post_time: base + chrono::Duration::seconds(1000),
+                sender: "U".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // msg_id=42 has the latest post_time within chat 123.
+        assert_eq!(indexer.latest_msg_id(123).await.unwrap(), Some(42));
+        assert_eq!(indexer.latest_msg_id(999).await.unwrap(), Some(9999));
+        assert_eq!(indexer.latest_msg_id(555).await.unwrap(), None);
+    }
+
+    #[test]
+    fn test_parse_msg_id_from_url() {
+        assert_eq!(
+            super::parse_msg_id_from_url("https://t.me/c/123/456"),
+            Some(456)
+        );
+        assert_eq!(super::parse_msg_id_from_url(""), None);
+        assert_eq!(super::parse_msg_id_from_url("not-a-url"), None);
+        assert_eq!(super::parse_msg_id_from_url("https://t.me/c/123/"), None);
     }
 }
