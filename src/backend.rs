@@ -423,6 +423,30 @@ impl BackendBot {
         Ok(None)
     }
 
+    /// Index a batch of pre-parsed messages (e.g. from a Telegram Desktop
+    /// JSON export). Registers the chat in `monitored_chats` so future live
+    /// updates are picked up — mirrors the post-condition of `download_history`.
+    /// Returns the number of messages indexed.
+    pub async fn import_messages(
+        &self,
+        chat_id: i64,
+        mut messages: Vec<IndexMsg>,
+    ) -> Result<usize> {
+        let share_id = get_share_id(chat_id);
+        let total = messages.len();
+        while !messages.is_empty() {
+            let take = messages.len().min(DOWNLOAD_BATCH_SIZE);
+            let batch: Vec<IndexMsg> = messages.drain(..take).collect();
+            self.indexer.add_documents_batch(batch).await?;
+        }
+        self.monitored_chats.insert(share_id, ());
+        info!(
+            "[{}] imported {} message(s) into chat {} (now monitored)",
+            self.id, total, share_id
+        );
+        Ok(total)
+    }
+
     /// Download chat history and index it
     ///
     /// The `progress_callback` is called while fetching messages with progress information.

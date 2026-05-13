@@ -24,6 +24,8 @@ use tantivy_analyzer_icu::search::{ICUFieldGroup, ICUSearchConfig};
 use thiserror::Error;
 use tracing::warn;
 
+pub mod import;
+
 const SNIPPET_MAX_CHARS: usize = 100;
 
 // ── Error type ──────────────────────────────────────────────────────

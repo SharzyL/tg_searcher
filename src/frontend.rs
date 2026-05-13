@@ -357,17 +357,12 @@ impl BotFrontend {
         &self,
         message: grammers_client::types::update::Message,
     ) -> Result<()> {
-        let text = message.text();
-        if text.is_empty() {
-            return Ok(());
-        }
-
-        // Get chat info - use peer_id().bot_api_dialog_id() like in backend
+        // Get chat / sender info first so we can decide how to route a
+        // file upload before falling back to the text-only path.
         let peer_id = message.peer_id();
         let chat_id = peer_id.bot_api_dialog_id();
         let is_private = peer_id.kind() == PeerKind::User;
 
-        // Get sender info
         let sender_id = if let Some(sender_peer) = message.sender() {
             sender_peer.id().bot_api_dialog_id()
         } else {
@@ -389,8 +384,29 @@ impl BotFrontend {
 
         let reply_to = message.reply_to_message_id();
 
+        // Admin file import: a .json document upload is treated as a
+        // Telegram Desktop chat export. Handled before the text-only
+        // dispatch so that a file with no caption isn't dropped.
+        let import_doc = if sender_id == self.admin_id
+            && let Some(grammers_client::types::Media::Document(doc)) = message.media()
+        {
+            let name = doc.name();
+            let is_json = name.to_lowercase().ends_with(".json")
+                || matches!(doc.mime_type(), Some(m) if m == "application/json");
+            if is_json { Some(doc) } else { None }
+        } else {
+            None
+        };
+
+        let text = message.text();
+        if import_doc.is_none() && text.is_empty() {
+            return Ok(());
+        }
+
         // Route to admin or normal handler, catch errors and send to user
-        let result = if sender_id == self.admin_id {
+        let result = if let Some(doc) = import_doc {
+            self.handle_import_json(chat_id, doc, reply_to).await
+        } else if sender_id == self.admin_id {
             self.handle_admin_message(chat_id, is_private, text, reply_to)
                 .await
         } else {
@@ -1047,6 +1063,100 @@ impl BotFrontend {
             );
         }
 
+        Ok(())
+    }
+
+    /// Import a Telegram Desktop chat export (`result.json`) uploaded by admin.
+    async fn handle_import_json(
+        &self,
+        user_chat_id: i64,
+        doc: grammers_client::types::media::Document,
+        _reply_to: Option<i32>,
+    ) -> Result<()> {
+        const MAX_BYTES: i64 = 500 * 1024 * 1024;
+        let doc_name = doc.name().to_string();
+        let doc_size = doc.size();
+        info!(
+            "[{}] import request: file={:?} size={} bytes",
+            self.id, doc_name, doc_size
+        );
+        if doc_size > MAX_BYTES {
+            warn!(
+                "[{}] rejecting import {:?}: size {} > limit {}",
+                self.id, doc_name, doc_size, MAX_BYTES
+            );
+            let msg = format!(
+                "❌ File too large ({} bytes, limit {} bytes).",
+                doc_size, MAX_BYTES
+            );
+            self.send_message(user_chat_id, &msg, None).await?;
+            return Ok(());
+        }
+
+        let progress_msg_id = self
+            .send_message(user_chat_id, "📥 Downloading export file...", None)
+            .await?;
+
+        // Stream the download straight into memory — /tmp is typically tmpfs
+        // so writing to disk would buy nothing, and parsing requires the
+        // whole file in memory anyway.
+        info!("[{}] downloading export {:?}...", self.id, doc_name);
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| crate::types::Error::Config("bot client not ready".into()))?;
+        let mut bytes: Vec<u8> = Vec::with_capacity(doc_size.max(0) as usize);
+        let mut download = client.iter_download(&doc);
+        while let Some(chunk) = download
+            .next()
+            .await
+            .map_err(|e| crate::types::Error::Telegram(format!("download failed: {e}")))?
+        {
+            bytes.extend_from_slice(&chunk);
+        }
+        info!("[{}] downloaded {} bytes", self.id, bytes.len());
+
+        self.edit_message(user_chat_id, progress_msg_id, "🔍 Parsing export...", None)
+            .await?;
+        let json_text = std::str::from_utf8(&bytes)
+            .map_err(|e| crate::types::Error::Config(format!("export is not valid UTF-8: {e}")))?;
+        let parsed = tg_searcher_index::import::parse_telegram_export(json_text)
+            .map_err(crate::types::Error::Index)?;
+        let chat_name = parsed.chat_name;
+        let chat_id = parsed.chat_id;
+        let msg_count = parsed.messages.len();
+        let escaped_name = html_escape::encode_text(&chat_name);
+        info!(
+            "[{}] parsed export: chat={:?} (id={}) {} message(s) to index",
+            self.id, chat_name, chat_id, msg_count
+        );
+
+        self.edit_message(
+            user_chat_id,
+            progress_msg_id,
+            &format!(
+                "📚 Indexing {} message(s) from <b>{}</b> (id={})...",
+                msg_count, escaped_name, chat_id
+            ),
+            None,
+        )
+        .await?;
+        let indexed = self
+            .backend
+            .import_messages(chat_id, parsed.messages)
+            .await?;
+        info!(
+            "[{}] import done: chat={:?} (id={}) indexed={}",
+            self.id, chat_name, chat_id, indexed
+        );
+
+        let response = format!(
+            "✅ Imported {} message(s) from <b>{}</b> (id={}).\n\
+             Start monitoring {} (id={}).",
+            indexed, escaped_name, chat_id, escaped_name, chat_id
+        );
+        self.edit_message(user_chat_id, progress_msg_id, &response, None)
+            .await?;
         Ok(())
     }
 
