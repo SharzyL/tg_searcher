@@ -132,6 +132,14 @@ fn parse_msg_id_from_url(url: &str) -> Option<i32> {
     url.rsplit('/').next()?.parse().ok()
 }
 
+/// Decode an i64 term-dictionary key (8 big-endian bytes, sign-bit flipped) back
+/// to the original chat id. Tantivy stores i64 terms via `i64_to_u64` so the
+/// dictionary is sorted in the natural numeric order; we just invert that.
+fn decode_chat_id_term(key: &[u8]) -> Option<i64> {
+    let bytes: [u8; 8] = key.try_into().ok()?;
+    Some(tantivy::u64_to_i64(u64::from_be_bytes(bytes)))
+}
+
 impl Indexer {
     /// Create or open an index at the given directory.
     pub async fn new(index_dir: &Path, from_scratch: bool) -> Result<Self> {
@@ -553,21 +561,25 @@ impl Indexer {
     }
 
     /// List all indexed chat IDs.
+    ///
+    /// Reads the `chat_id` field's term dictionary in each segment instead of
+    /// scanning stored documents — O(unique chat ids) per segment with no
+    /// store decompression.
     pub async fn list_indexed_chats(&self) -> Result<Vec<i64>> {
         let searcher = self.reader.searcher();
         let mut chat_ids = std::collections::HashSet::new();
 
         for segment_reader in searcher.segment_readers() {
-            let store_reader = segment_reader
-                .get_store_reader(0)
+            let inv = segment_reader
+                .inverted_index(self.fields.chat_id)
                 .map_err(|e| Error::Index(e.to_string()))?;
-
-            for doc_id in 0..segment_reader.max_doc() {
-                if let Ok(doc) = store_reader.get::<tantivy::TantivyDocument>(doc_id)
-                    && let Some(chat_id_value) = doc.get_first(self.fields.chat_id)
-                    && let Some(chat_id) = chat_id_value.as_i64()
-                {
-                    chat_ids.insert(chat_id);
+            let mut stream = inv
+                .terms()
+                .stream()
+                .map_err(|e| Error::Index(e.to_string()))?;
+            while stream.advance() {
+                if let Some(id) = decode_chat_id_term(stream.key()) {
+                    chat_ids.insert(id);
                 }
             }
         }
@@ -576,21 +588,24 @@ impl Indexer {
     }
 
     /// Get document counts per chat (efficient single-pass counting).
+    ///
+    /// Uses term `doc_freq` from the `chat_id` field's inverted index instead
+    /// of scanning stored documents.
     pub async fn get_chat_document_counts(&self) -> Result<HashMap<i64, usize>> {
         let searcher = self.reader.searcher();
         let mut counts: HashMap<i64, usize> = HashMap::new();
 
         for segment_reader in searcher.segment_readers() {
-            let store_reader = segment_reader
-                .get_store_reader(0)
+            let inv = segment_reader
+                .inverted_index(self.fields.chat_id)
                 .map_err(|e| Error::Index(e.to_string()))?;
-
-            for doc_id in 0..segment_reader.max_doc() {
-                if let Ok(doc) = store_reader.get::<tantivy::TantivyDocument>(doc_id)
-                    && let Some(chat_id_value) = doc.get_first(self.fields.chat_id)
-                    && let Some(chat_id) = chat_id_value.as_i64()
-                {
-                    *counts.entry(chat_id).or_insert(0) += 1;
+            let mut stream = inv
+                .terms()
+                .stream()
+                .map_err(|e| Error::Index(e.to_string()))?;
+            while stream.advance() {
+                if let Some(id) = decode_chat_id_term(stream.key()) {
+                    *counts.entry(id).or_insert(0) += stream.value().doc_freq as usize;
                 }
             }
         }

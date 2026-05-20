@@ -60,5 +60,18 @@ pub fn search_with_snippets(
             highlighted_ranges: snippet.highlights,
         });
     }
+
+    // Deterministic tiebreaker: tantivy returns docs in DocId order when scores
+    // tie (common with ConstScoreQuery), and DocId depends on IndexWriter thread
+    // scheduling. Sort ties by shorter body first, then by id, so rankings are
+    // stable across runs and prefer concise matches.
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.body.len().cmp(&b.body.len()))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
     Ok(hits)
 }

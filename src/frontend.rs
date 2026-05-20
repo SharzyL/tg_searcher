@@ -268,11 +268,35 @@ impl BotFrontend {
             let frontend_id = self.id.clone();
             tokio::spawn(async move {
                 let mut rx = backend.catchup_done_receiver();
+                let chat_count = backend.monitored_chats_count();
+
+                // If catch-up is still in flight, post a progress message that
+                // we'll edit in place once it completes.
+                let progress_msg_id = if chat_count > 0 && !*rx.borrow() {
+                    let msg = format!("🔄 Catching up on {} monitored chat(s)…", chat_count);
+                    match client.as_ref() {
+                        Some(c) => {
+                            match Self::send_message_with_client(c, admin_id, &msg, None).await {
+                                Ok(id) => Some(id),
+                                Err(e) => {
+                                    warn!(
+                                        "[{}] failed to send catch-up start notice to admin: {}",
+                                        frontend_id, e
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+
                 if rx.wait_for(|&v| v).await.is_err() {
                     // Sender dropped before signalling — backend gone, nothing to report.
                     return;
                 }
-                let chat_count = backend.monitored_chats_count();
                 let results = backend.catchup_results().await;
                 let msg = if results.is_empty() {
                     format!(
@@ -300,14 +324,21 @@ impl BotFrontend {
                     }
                     lines.join("\n")
                 };
-                if let Some(client) = client
-                    && let Err(e) =
-                        Self::send_message_with_client(&client, admin_id, &msg, None).await
-                {
-                    warn!(
-                        "[{}] failed to send catch-up complete notice to admin: {}",
-                        frontend_id, e
-                    );
+                if let Some(client) = client {
+                    let result = match progress_msg_id {
+                        Some(id) => {
+                            Self::edit_message_with_client(&client, admin_id, id, &msg, None).await
+                        }
+                        None => Self::send_message_with_client(&client, admin_id, &msg, None)
+                            .await
+                            .map(|_| ()),
+                    };
+                    if let Err(e) = result {
+                        warn!(
+                            "[{}] failed to send catch-up complete notice to admin: {}",
+                            frontend_id, e
+                        );
+                    }
                 }
             });
         }
@@ -384,21 +415,44 @@ impl BotFrontend {
 
         let reply_to = message.reply_to_message_id();
         let text = message.text();
-        if text.is_empty() {
-            return Ok(());
-        }
-
+        let has_media = message.media().is_some();
         let is_admin = sender_id == self.admin_id;
+
+        // In a private chat with the admin, any media upload is treated as an
+        // import attempt — no /import caption required. handle_import validates
+        // the file type and reports back if it isn't a JSON export.
+        let auto_import = is_private && is_admin && has_media;
+
         let is_import_cmd = is_admin
+            && !text.is_empty()
             && matches!(
-                parse_command(text, self.username.as_deref()),
+                parse_command(text, self.username.as_deref(), !is_private),
                 Some(("import", _))
             );
+
+        if text.is_empty() && !auto_import {
+            debug!(
+                "[{}] ignoring empty-text message from {} (has_media={})",
+                self.id, sender_id, has_media
+            );
+            if has_media && is_admin {
+                let hint = "📎 Got a file with no caption. \
+                    To index a Telegram Desktop export, resend with <code>/import</code> as the caption \
+                    (or send the file directly in a private chat).";
+                if let Err(e) = self.send_message(chat_id, hint, None).await {
+                    warn!(
+                        "[{}] failed to send file-without-caption hint: {}",
+                        self.id, e
+                    );
+                }
+            }
+            return Ok(());
+        }
 
         // Route to handler, catch errors and send to user. /import is dispatched
         // at this level (rather than via handle_admin_message) because it needs
         // access to the raw message for `.media()`.
-        let result = if is_import_cmd {
+        let result = if is_import_cmd || auto_import {
             self.handle_import(chat_id, &message).await
         } else if is_admin {
             self.handle_admin_message(chat_id, is_private, text, reply_to)
@@ -574,7 +628,7 @@ impl BotFrontend {
 
         let buttons = self.render_buttons(&result, page_num, state.sort, state.reverse);
         let message = self
-            .render_response_message(&result, used_time, buttons)
+            .render_response_message(&result, used_time, state.sort, state.reverse, buttons)
             .await?;
 
         self.edit_input_message(chat_id, message_id, message)
@@ -674,8 +728,9 @@ impl BotFrontend {
         }
 
         let username = self.username.as_deref();
-        let Some((cmd, _rest)) = parse_command(trimmed, username) else {
-            // Not a slash command, or addressed to a different bot.
+        let Some((cmd, _rest)) = parse_command(trimmed, username, !is_private) else {
+            // Not a slash command, or addressed to a different bot, or — in a
+            // group chat — a slash command without an explicit `@bot` suffix.
             // In private chats only, treat raw text as a search query.
             if is_private && !trimmed.starts_with('/') {
                 self.handle_search(chat_id, 0, trimmed, reply_to).await?;
@@ -711,7 +766,7 @@ impl BotFrontend {
         // Admin-only commands. Anything else (including non-commands and
         // commands addressed to other bots) falls through to the normal
         // handler, which also handles plain-text search etc.
-        if let Some((cmd, _rest)) = parse_command(trimmed, username) {
+        if let Some((cmd, _rest)) = parse_command(trimmed, username, !is_private) {
             match cmd {
                 "stat" => return self.handle_stat(chat_id).await,
                 "download_chat" => {
@@ -882,7 +937,7 @@ impl BotFrontend {
 
         let buttons = self.render_buttons(&result, 1, sort, reverse);
         let message = self
-            .render_response_message(&result, used_time, buttons)
+            .render_response_message(&result, used_time, sort, reverse, buttons)
             .await?;
 
         // Send search results and get message_id; fall back to HTML on failure
@@ -1438,14 +1493,23 @@ impl BotFrontend {
         &self,
         result: &SearchResult,
         used_time: f64,
+        sort: SortMode,
+        reverse: bool,
         buttons: Vec<Vec<(String, String)>>,
     ) -> Result<InputMessage> {
         let mut builder = MessageBuilder::new();
 
+        let sort_name = match sort {
+            SortMode::Time => "time",
+            SortMode::Relevance => "relevance",
+        };
+        let arrow = if reverse { "↑" } else { "↓" };
         builder.push(&format!(
-            "Found {} results in {:.0} ms:\n\n",
+            "Found {} results in {:.0} ms · {} {}\n\n",
             result.total_results,
-            used_time * 1000.0
+            used_time * 1000.0,
+            sort_name,
+            arrow,
         ));
 
         // Pre-translate unique chat IDs to avoid redundant lookups
@@ -1662,17 +1726,14 @@ impl BotFrontend {
             next,
         ];
 
-        // Sort button: label shows what pressing it switches TO,
-        // with the current mode in parens.
+        // Sort button: label shows what pressing it switches TO. The
+        // current mode is rendered in the result header instead.
         let sort_button = match sort {
             SortMode::Time => (
-                "Sort by Relevance (by Time now)".to_string(),
+                "Sort by Relevance".to_string(),
                 "search_sort=relevance".to_string(),
             ),
-            SortMode::Relevance => (
-                "Sort by Time (by Relevance now)".to_string(),
-                "search_sort=time".to_string(),
-            ),
+            SortMode::Relevance => ("Sort by Time".to_string(), "search_sort=time".to_string()),
         };
         let reverse_button = (
             "Reverse".to_string(),

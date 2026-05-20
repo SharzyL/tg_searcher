@@ -43,7 +43,13 @@ pub fn remove_first_word(text: &str) -> &str {
 /// - it's addressed via `@target` to a username other than `bot_username`
 ///   (case-insensitive); when `bot_username` is `None`, any target is
 ///   accepted (used during bot init before username is known)
-pub fn parse_command<'a>(text: &'a str, bot_username: Option<&str>) -> Option<(&'a str, &'a str)> {
+/// - `require_explicit_target` is `true` and the command has no `@target` (used
+///   in group chats so we only react when explicitly addressed, e.g. `/cmd@bot`)
+pub fn parse_command<'a>(
+    text: &'a str,
+    bot_username: Option<&str>,
+    require_explicit_target: bool,
+) -> Option<(&'a str, &'a str)> {
     let trimmed = text.trim_start();
     let first = trimmed.split_whitespace().next()?;
     let stripped = first.strip_prefix('/')?;
@@ -51,11 +57,19 @@ pub fn parse_command<'a>(text: &'a str, bot_username: Option<&str>) -> Option<(&
         Some((c, t)) => (c, Some(t)),
         None => (stripped, None),
     };
-    if let Some(target) = target
-        && let Some(bot) = bot_username
-        && !target.eq_ignore_ascii_case(bot)
-    {
-        return None;
+    match target {
+        Some(target) => {
+            if let Some(bot) = bot_username
+                && !target.eq_ignore_ascii_case(bot)
+            {
+                return None;
+            }
+        }
+        None => {
+            if require_explicit_target {
+                return None;
+            }
+        }
     }
     let rest = trimmed[first.len()..].trim();
     Some((cmd, rest))
@@ -308,38 +322,53 @@ mod tests {
     fn test_parse_command() {
         // Plain command, no target.
         assert_eq!(
-            parse_command("/search foo bar", None),
+            parse_command("/search foo bar", None, false),
             Some(("search", "foo bar"))
         );
-        assert_eq!(parse_command("/search", None), Some(("search", "")));
+        assert_eq!(parse_command("/search", None, false), Some(("search", "")));
         assert_eq!(
-            parse_command("  /search   foo  ", None),
+            parse_command("  /search   foo  ", None, false),
             Some(("search", "foo"))
         );
 
         // With matching target (case-insensitive).
         assert_eq!(
-            parse_command("/search@mybot foo", Some("mybot")),
+            parse_command("/search@mybot foo", Some("mybot"), false),
             Some(("search", "foo"))
         );
         assert_eq!(
-            parse_command("/search@MyBot foo", Some("mybot")),
+            parse_command("/search@MyBot foo", Some("mybot"), false),
             Some(("search", "foo"))
         );
 
         // With mismatched target → None.
-        assert_eq!(parse_command("/search@otherbot foo", Some("mybot")), None);
+        assert_eq!(
+            parse_command("/search@otherbot foo", Some("mybot"), false),
+            None
+        );
 
         // With target but bot_username unknown → accept.
         assert_eq!(
-            parse_command("/search@mybot foo", None),
+            parse_command("/search@mybot foo", None, false),
             Some(("search", "foo"))
         );
 
         // Not a command.
-        assert_eq!(parse_command("hello world", Some("mybot")), None);
-        assert_eq!(parse_command("", Some("mybot")), None);
-        assert_eq!(parse_command("   ", Some("mybot")), None);
+        assert_eq!(parse_command("hello world", Some("mybot"), false), None);
+        assert_eq!(parse_command("", Some("mybot"), false), None);
+        assert_eq!(parse_command("   ", Some("mybot"), false), None);
+
+        // require_explicit_target=true (group-chat semantics): bare `/cmd`
+        // without an `@bot` suffix is rejected.
+        assert_eq!(parse_command("/search foo", Some("mybot"), true), None);
+        assert_eq!(
+            parse_command("/search@mybot foo", Some("mybot"), true),
+            Some(("search", "foo"))
+        );
+        assert_eq!(
+            parse_command("/search@otherbot foo", Some("mybot"), true),
+            None
+        );
     }
 
     #[test]
