@@ -35,6 +35,32 @@ pub fn remove_first_word(text: &str) -> &str {
     }
 }
 
+/// Parse the first whitespace-delimited token of `text` as a slash-command
+/// (`/name` or `/name@target`). Returns `Some((command, rest))` where
+/// `command` is the bare command without the leading slash and `rest` is the
+/// remainder after the first token. Returns `None` if:
+/// - the text doesn't start with `/`
+/// - it's addressed via `@target` to a username other than `bot_username`
+///   (case-insensitive); when `bot_username` is `None`, any target is
+///   accepted (used during bot init before username is known)
+pub fn parse_command<'a>(text: &'a str, bot_username: Option<&str>) -> Option<(&'a str, &'a str)> {
+    let trimmed = text.trim_start();
+    let first = trimmed.split_whitespace().next()?;
+    let stripped = first.strip_prefix('/')?;
+    let (cmd, target) = match stripped.split_once('@') {
+        Some((c, t)) => (c, Some(t)),
+        None => (stripped, None),
+    };
+    if let Some(target) = target
+        && let Some(bot) = bot_username
+        && !target.eq_ignore_ascii_case(bot)
+    {
+        return None;
+    }
+    let rest = trimmed[first.len()..].trim();
+    Some((cmd, rest))
+}
+
 /// Get normalized share ID from Telegram chat ID
 ///
 /// Telegram uses different ID formats for different chat types.
@@ -277,6 +303,44 @@ fn collapse_byte_ranges(ranges: &[std::ops::Range<usize>]) -> Vec<std::ops::Rang
 #[allow(clippy::single_range_in_vec_init)] // tests intentionally build Vec<Range>
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_command() {
+        // Plain command, no target.
+        assert_eq!(
+            parse_command("/search foo bar", None),
+            Some(("search", "foo bar"))
+        );
+        assert_eq!(parse_command("/search", None), Some(("search", "")));
+        assert_eq!(
+            parse_command("  /search   foo  ", None),
+            Some(("search", "foo"))
+        );
+
+        // With matching target (case-insensitive).
+        assert_eq!(
+            parse_command("/search@mybot foo", Some("mybot")),
+            Some(("search", "foo"))
+        );
+        assert_eq!(
+            parse_command("/search@MyBot foo", Some("mybot")),
+            Some(("search", "foo"))
+        );
+
+        // With mismatched target → None.
+        assert_eq!(parse_command("/search@otherbot foo", Some("mybot")), None);
+
+        // With target but bot_username unknown → accept.
+        assert_eq!(
+            parse_command("/search@mybot foo", None),
+            Some(("search", "foo"))
+        );
+
+        // Not a command.
+        assert_eq!(parse_command("hello world", Some("mybot")), None);
+        assert_eq!(parse_command("", Some("mybot")), None);
+        assert_eq!(parse_command("   ", Some("mybot")), None);
+    }
 
     #[test]
     fn test_escape_content() {

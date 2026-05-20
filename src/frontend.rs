@@ -13,7 +13,7 @@ use crate::session::ClientSession;
 use crate::storage::Storage;
 use crate::types::{Result, SortMode};
 use crate::utils::MessageBuilder;
-use crate::utils::remove_first_word;
+use crate::utils::{parse_command, remove_first_word};
 use grammers_client::client::UpdatesConfiguration;
 use grammers_client::types::update::{CallbackQuery, Update};
 use grammers_client::{Client, InputMessage, button, reply_markup};
@@ -383,30 +383,24 @@ impl BotFrontend {
         }
 
         let reply_to = message.reply_to_message_id();
-
-        // Admin file import: a .json document upload is treated as a
-        // Telegram Desktop chat export. Handled before the text-only
-        // dispatch so that a file with no caption isn't dropped.
-        let import_doc = if sender_id == self.admin_id
-            && let Some(grammers_client::types::Media::Document(doc)) = message.media()
-        {
-            let name = doc.name();
-            let is_json = name.to_lowercase().ends_with(".json")
-                || matches!(doc.mime_type(), Some(m) if m == "application/json");
-            if is_json { Some(doc) } else { None }
-        } else {
-            None
-        };
-
         let text = message.text();
-        if import_doc.is_none() && text.is_empty() {
+        if text.is_empty() {
             return Ok(());
         }
 
-        // Route to admin or normal handler, catch errors and send to user
-        let result = if let Some(doc) = import_doc {
-            self.handle_import_json(chat_id, doc, reply_to).await
-        } else if sender_id == self.admin_id {
+        let is_admin = sender_id == self.admin_id;
+        let is_import_cmd = is_admin
+            && matches!(
+                parse_command(text, self.username.as_deref()),
+                Some(("import", _))
+            );
+
+        // Route to handler, catch errors and send to user. /import is dispatched
+        // at this level (rather than via handle_admin_message) because it needs
+        // access to the raw message for `.media()`.
+        let result = if is_import_cmd {
+            self.handle_import(chat_id, &message).await
+        } else if is_admin {
             self.handle_admin_message(chat_id, is_private, text, reply_to)
                 .await
         } else {
@@ -675,25 +669,31 @@ impl BotFrontend {
         );
 
         let trimmed = text.trim();
-
-        if trimmed.is_empty() || trimmed.starts_with("/start") {
+        if trimmed.is_empty() {
             return Ok(());
-        } else if trimmed.starts_with("/random") {
-            self.handle_random(chat_id).await?;
-        } else if trimmed.starts_with("/chats") {
-            self.handle_chats(chat_id, trimmed).await?;
-        } else if trimmed.starts_with("/search") {
-            self.handle_search(chat_id, 0, trimmed, reply_to).await?;
-        } else if trimmed.starts_with("/") {
-            let cmd = trimmed.split_whitespace().next().unwrap_or("");
-            let response = format!("❌ Unknown command: {}", cmd);
-            self.send_message(chat_id, &response, None).await?;
-            warn!("[{}] unknown command: {}", self.id, cmd);
-        } else if is_private {
-            // Plain text search (only in private chats)
-            self.handle_search(chat_id, 0, trimmed, reply_to).await?;
         }
 
+        let username = self.username.as_deref();
+        let Some((cmd, _rest)) = parse_command(trimmed, username) else {
+            // Not a slash command, or addressed to a different bot.
+            // In private chats only, treat raw text as a search query.
+            if is_private && !trimmed.starts_with('/') {
+                self.handle_search(chat_id, 0, trimmed, reply_to).await?;
+            }
+            return Ok(());
+        };
+
+        match cmd {
+            "start" => {}
+            "random" => self.handle_random(chat_id).await?,
+            "chats" => self.handle_chats(chat_id, trimmed).await?,
+            "search" => self.handle_search(chat_id, 0, trimmed, reply_to).await?,
+            other => {
+                let response = format!("❌ Unknown command: /{}", other);
+                self.send_message(chat_id, &response, None).await?;
+                warn!("[{}] unknown command: /{}", self.id, other);
+            }
+        }
         Ok(())
     }
 
@@ -706,27 +706,28 @@ impl BotFrontend {
         reply_to: Option<i32>,
     ) -> Result<()> {
         let trimmed = text.trim();
+        let username = self.username.as_deref();
 
-        if trimmed.starts_with("/stat") {
-            self.handle_stat(chat_id).await?;
-        } else if trimmed.starts_with("/download_chat") {
-            self.handle_download_chat(chat_id, trimmed, reply_to)
-                .await?;
-        } else if trimmed.starts_with("/monitor_chat") {
-            self.handle_monitor_chat(chat_id, trimmed, reply_to).await?;
-        } else if trimmed.starts_with("/clear") {
-            self.handle_clear(chat_id, trimmed, reply_to).await?;
-        } else if trimmed.starts_with("/refresh_chat_names") {
-            self.handle_refresh_chat_names(chat_id).await?;
-        } else if trimmed.starts_with("/find_chat_id") {
-            self.handle_find_chat_id(chat_id, trimmed).await?;
-        } else {
-            // Fallback to normal handler
-            self.handle_normal_message(chat_id, is_private, text, reply_to)
-                .await?;
+        // Admin-only commands. Anything else (including non-commands and
+        // commands addressed to other bots) falls through to the normal
+        // handler, which also handles plain-text search etc.
+        if let Some((cmd, _rest)) = parse_command(trimmed, username) {
+            match cmd {
+                "stat" => return self.handle_stat(chat_id).await,
+                "download_chat" => {
+                    return self.handle_download_chat(chat_id, trimmed, reply_to).await;
+                }
+                "monitor_chat" => {
+                    return self.handle_monitor_chat(chat_id, trimmed, reply_to).await;
+                }
+                "clear" => return self.handle_clear(chat_id, trimmed, reply_to).await,
+                "refresh_chat_names" => return self.handle_refresh_chat_names(chat_id).await,
+                "find_chat_id" => return self.handle_find_chat_id(chat_id, trimmed).await,
+                _ => {}
+            }
         }
-
-        Ok(())
+        self.handle_normal_message(chat_id, is_private, text, reply_to)
+            .await
     }
 
     /// /random - Get random message
@@ -1066,15 +1067,51 @@ impl BotFrontend {
         Ok(())
     }
 
-    /// Import a Telegram Desktop chat export (`result.json`) uploaded by admin.
-    async fn handle_import_json(
+    /// `/import` — import a Telegram Desktop chat export (`result.json`)
+    /// from a JSON document attached as the message media. The command must
+    /// be sent as the caption of the JSON file. Validates the attachment is
+    /// present and looks like JSON before doing any work.
+    async fn handle_import(
         &self,
         user_chat_id: i64,
-        doc: grammers_client::types::media::Document,
-        _reply_to: Option<i32>,
+        message: &grammers_client::types::update::Message,
     ) -> Result<()> {
-        const MAX_BYTES: i64 = 500 * 1024 * 1024;
+        let doc = match message.media() {
+            Some(grammers_client::types::Media::Document(d)) => d,
+            Some(_) => {
+                self.send_message(
+                    user_chat_id,
+                    "❌ /import expects a JSON document, but the attachment isn't a file.",
+                    None,
+                )
+                .await?;
+                return Ok(());
+            }
+            None => {
+                self.send_message(
+                    user_chat_id,
+                    "❌ /import needs a JSON file. Send the file with <code>/import</code> as its caption.",
+                    None,
+                )
+                .await?;
+                return Ok(());
+            }
+        };
         let doc_name = doc.name().to_string();
+        let mime = doc.mime_type();
+        let is_json = doc_name.to_lowercase().ends_with(".json")
+            || matches!(mime, Some(m) if m == "application/json");
+        if !is_json {
+            let response = format!(
+                "❌ /import expects a JSON file (got name={:?} mime={:?}).",
+                doc_name,
+                mime.unwrap_or("(none)")
+            );
+            self.send_message(user_chat_id, &response, None).await?;
+            return Ok(());
+        }
+
+        const MAX_BYTES: i64 = 500 * 1024 * 1024;
         let doc_size = doc.size();
         info!(
             "[{}] import request: file={:?} size={} bytes",
@@ -1502,6 +1539,10 @@ impl BotFrontend {
             tl::enums::BotCommand::Command(tl::types::BotCommand {
                 command: "find_chat_id".to_string(),
                 description: "<keyword> - Find chat ID by name".to_string(),
+            }),
+            tl::enums::BotCommand::Command(tl::types::BotCommand {
+                command: "import".to_string(),
+                description: "Send as caption of a result.json export to index it".to_string(),
             }),
         ];
 
