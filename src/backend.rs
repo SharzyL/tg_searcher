@@ -431,9 +431,20 @@ impl BackendBot {
         &self,
         chat_id: i64,
         mut messages: Vec<IndexMsg>,
-    ) -> Result<usize> {
+    ) -> Result<DownloadResult> {
         let share_id = get_share_id(chat_id);
         let total = messages.len();
+
+        let (min_msg_id, max_msg_id) = messages
+            .iter()
+            .filter_map(|m| m.url.rsplit('/').next()?.parse::<i32>().ok())
+            .fold((i32::MAX, 0_i32), |(lo, hi), id| (lo.min(id), hi.max(id)));
+        let (min_msg_id, max_msg_id) = if total == 0 {
+            (0, 0)
+        } else {
+            (min_msg_id, max_msg_id)
+        };
+
         while !messages.is_empty() {
             let take = messages.len().min(DOWNLOAD_BATCH_SIZE);
             let batch: Vec<IndexMsg> = messages.drain(..take).collect();
@@ -441,10 +452,14 @@ impl BackendBot {
         }
         self.monitored_chats.insert(share_id, ());
         info!(
-            "[{}] imported {} message(s) into chat {} (now monitored)",
-            self.id, total, share_id
+            "[{}] imported {} message(s) into chat {} (msg_id {}..{}, now monitored)",
+            self.id, total, share_id, min_msg_id, max_msg_id
         );
-        Ok(total)
+        Ok(DownloadResult {
+            indexed_count: total,
+            min_msg_id,
+            max_msg_id,
+        })
     }
 
     /// Download chat history and index it

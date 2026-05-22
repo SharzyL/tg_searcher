@@ -1233,19 +1233,25 @@ impl BotFrontend {
             None,
         )
         .await?;
-        let indexed = self
+        let result = self
             .backend
             .import_messages(chat_id, parsed.messages)
             .await?;
         info!(
-            "[{}] import done: chat={:?} (id={}) indexed={}",
-            self.id, chat_name, chat_id, indexed
+            "[{}] import done: chat={:?} (id={}) indexed={} (msg_id {}..{})",
+            self.id, chat_name, chat_id, result.indexed_count, result.min_msg_id, result.max_msg_id
         );
 
         let response = format!(
-            "✅ Imported {} message(s) from <b>{}</b> (id={}).\n\
+            "✅ Imported {} message(s) from <b>{}</b> (id={}, msg_id {}..{}).\n\
              Start monitoring {} (id={}).",
-            indexed, escaped_name, chat_id, escaped_name, chat_id
+            result.indexed_count,
+            escaped_name,
+            chat_id,
+            result.min_msg_id,
+            result.max_msg_id,
+            escaped_name,
+            chat_id
         );
         self.edit_message(user_chat_id, progress_msg_id, &response, None)
             .await?;
