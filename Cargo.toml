@@ -7,32 +7,32 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.100"
-async-trait = "0.1.89"
-chrono = { version = "0.4.42", features = ["serde"] }
-clap = { version = "4.5.54", features = ["derive"] }
-dashmap = "6.1.0"
-grammers-client = { version = "0.8.1", features = ["html"] }
-grammers-mtsender = { version = "0.8.1", features = ["proxy"] }
-grammers-session = "0.8.0"
-grammers-tl-types = "0.8.0"
-html-escape = "0.2.13"
-nix = { version = "0.31.2", features = ["user"] }
-rpassword = "7.3.1"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+anyhow = "1.0.104"
+async-trait = "0.1.91"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.4", features = ["derive"] }
+dashmap = "6.2.1"
+grammers-client = { version = "0.10.0", features = ["html"] }
+grammers-mtsender = { version = "0.10.0", features = ["proxy"] }
+grammers-session = "0.10.0"
+grammers-tl-types = "0.10.0"
+html-escape = "0.2.14"
+nix = { version = "0.31.3", features = ["user"] }
+rpassword = "7.5.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 serde_yaml = "0.9.34"
 shell-words = "1.1.1"
 tg-searcher-index = { path = "crates/tg-searcher-index" }
-thiserror = "2.0.17"
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
-tokio-socks = "0.5.2"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
+tokio-socks = "0.5.3"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
-tempfile = "3.24.0"
-tokio = { version = "1.49.0", features = ["test-util"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["test-util"] }
 
 [profile.release]
 opt-level = "s"

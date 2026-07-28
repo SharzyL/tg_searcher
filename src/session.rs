@@ -50,6 +50,7 @@ impl ClientSession {
         // Load or create SQLite session
         let session_storage = Arc::new(
             SqliteSession::open(session_file)
+                .await
                 .map_err(|e| Error::Config(format!("Failed to open session: {}", e)))?,
         );
 
@@ -104,8 +105,8 @@ impl ClientSession {
         } else {
             SenderPool::new(Arc::clone(&self.session_storage), self.api_id)
         };
-        let client = Client::new(&pool);
-        let SenderPool { runner, .. } = pool;
+        let SenderPool { runner, handle, .. } = pool;
+        let client = Client::new(handle);
 
         // Spawn runner
         let runner_task = tokio::spawn(runner.run());
@@ -197,8 +198,8 @@ impl ClientSession {
         } else {
             SenderPool::new(Arc::clone(&self.session_storage), self.api_id)
         };
-        let client = Client::new(&pool);
-        let SenderPool { runner, .. } = pool;
+        let SenderPool { runner, handle, .. } = pool;
+        let client = Client::new(handle);
 
         // Spawn runner
         let runner_task = tokio::spawn(runner.run());
@@ -215,7 +216,7 @@ impl ClientSession {
 
             // Populate chat name cache
             let peer = dialog.peer();
-            let chat_id = peer.id().bot_api_dialog_id();
+            let chat_id = peer.id().bot_api_dialog_id_unchecked();
             let share_id = get_share_id(chat_id);
             if let Some(name) = peer.name() {
                 self.chat_cache.insert(share_id, name.to_string());

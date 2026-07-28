@@ -18,8 +18,8 @@ use crate::utils::{brief_content, escape_content, get_share_id};
 use dashmap::DashMap;
 use grammers_client::Client;
 use grammers_client::client::UpdatesConfiguration;
-use grammers_client::types::update::Message as UpdateMessage; // Update message type
-use grammers_client::types::update::{MessageDeletion, Update};
+use grammers_client::update::Message as UpdateMessage; // Update message type
+use grammers_client::update::{MessageDeletion, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -134,10 +134,12 @@ impl BackendBot {
 
         // Create SenderPool and Client for all operations (not just updates)
         let pool = Self::create_sender_pool(&self.session);
-        let client = Client::new(&pool);
         let SenderPool {
-            runner, updates, ..
+            runner,
+            handle,
+            updates,
         } = pool;
+        let client = Client::new(handle);
 
         // Store the client for use by other methods (download_history, etc.)
         self.client
@@ -167,13 +169,18 @@ impl BackendBot {
             }
         }
 
-        let mut updates = updates_client.stream_updates(
-            updates,
-            UpdatesConfiguration {
-                catch_up: false, // Don't fetch old updates - only receive new ones from now
-                ..Default::default()
-            },
-        );
+        let mut updates = updates_client
+            .stream_updates(
+                updates,
+                UpdatesConfiguration {
+                    catch_up: false, // Don't fetch old updates - only receive new ones from now
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| {
+                crate::types::Error::Telegram(format!("Failed to start update stream: {}", e))
+            })?;
 
         info!("[{}] streaming updates, waiting for messages...", self.id);
 
@@ -191,7 +198,7 @@ impl BackendBot {
     /// concurrently via `tokio::try_join!`.
     async fn run_main_loop(
         &self,
-        updates: &mut grammers_client::client::updates::UpdateStream,
+        updates: &mut grammers_client::client::UpdateStream,
     ) -> Result<()> {
         loop {
             let update = match updates.next().await {
@@ -204,7 +211,7 @@ impl BackendBot {
 
             match update {
                 Update::NewMessage(message) => {
-                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id());
+                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id_unchecked());
                     if !self.should_monitor(share_id) {
                         continue;
                     }
@@ -221,7 +228,7 @@ impl BackendBot {
                     }
                 }
                 Update::MessageEdited(message) => {
-                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id());
+                    let share_id = get_share_id(message.peer_id().bot_api_dialog_id_unchecked());
                     if !self.should_monitor(share_id) {
                         continue;
                     }
@@ -404,19 +411,18 @@ impl BackendBot {
     async fn find_peer_in_dialogs(
         &self,
         share_id: i64,
-    ) -> Result<Option<grammers_client::types::Peer>> {
+    ) -> Result<Option<grammers_client::session::types::PeerRef>> {
         let client = self.get_client()?;
         let mut dialogs = client.iter_dialogs();
 
         while let Some(dialog) = dialogs.next().await.map_err(|e| {
             crate::types::Error::Telegram(format!("Failed to iterate dialogs: {}", e))
         })? {
-            let peer = dialog.peer();
-            let chat_id = peer.id().bot_api_dialog_id();
+            let chat_id = dialog.peer().id().bot_api_dialog_id_unchecked();
             let peer_share_id = get_share_id(chat_id);
 
             if peer_share_id == share_id {
-                return Ok(Some(peer.clone()));
+                return Ok(Some(dialog.peer_ref()));
             }
         }
 
@@ -496,7 +502,7 @@ impl BackendBot {
         // Iterate messages (fetches from newest to oldest by default).
         // We stream-fetch and index in the same loop (no buffering / reordering required).
         let client = self.get_client()?;
-        let mut message_iter = client.iter_messages(&chat).offset_id(max_id.unwrap_or(0));
+        let mut message_iter = client.iter_messages(chat).offset_id(max_id.unwrap_or(0));
 
         let mut fetched_count: usize = 0;
         let mut indexed_count: usize = 0;
@@ -544,7 +550,7 @@ impl BackendBot {
             let text = message.text();
             if let Some(content) = self.extract_text(text) {
                 // Create IndexMsg from iter_messages result
-                let chat_id = message.peer_id().bot_api_dialog_id();
+                let chat_id = message.peer_id().bot_api_dialog_id_unchecked();
                 let share_id = get_share_id(chat_id);
                 let sender = message
                     .sender()
@@ -702,7 +708,7 @@ impl BackendBot {
 
             while let Some(dialog) = dialogs.next().await.ok().flatten() {
                 let peer = dialog.peer();
-                let chat_id = peer.id().bot_api_dialog_id();
+                let chat_id = peer.id().bot_api_dialog_id_unchecked();
                 let share_id = get_share_id(chat_id);
 
                 if let Some(name) = peer.name() {
@@ -827,7 +833,7 @@ impl BackendBot {
 
     /// Convert grammers UpdateMessage to IndexMsg
     fn message_to_index_msg(&self, message: &UpdateMessage, content: String) -> Result<IndexMsg> {
-        let chat_id = message.peer_id().bot_api_dialog_id();
+        let chat_id = message.peer_id().bot_api_dialog_id_unchecked();
         let share_id = get_share_id(chat_id);
         let msg_id = message.id();
 
@@ -852,7 +858,7 @@ impl BackendBot {
 
     /// Handle new message event (caller already checked should_monitor)
     async fn handle_new_message(&self, message: UpdateMessage) -> Result<()> {
-        let chat_id = message.peer_id().bot_api_dialog_id();
+        let chat_id = message.peer_id().bot_api_dialog_id_unchecked();
         let share_id = get_share_id(chat_id);
 
         let text = message.text();
@@ -878,7 +884,7 @@ impl BackendBot {
 
     /// Handle message edited event (caller already checked should_monitor)
     async fn handle_message_edited(&self, message: UpdateMessage) -> Result<()> {
-        let chat_id = message.peer_id().bot_api_dialog_id();
+        let chat_id = message.peer_id().bot_api_dialog_id_unchecked();
         let share_id = get_share_id(chat_id);
 
         let text = message.text();
@@ -1011,6 +1017,6 @@ impl BackendBot {
             })?
             .ok_or_else(|| crate::types::Error::EntityNotFound(username.to_string()))?;
 
-        Ok(get_share_id(peer.id().bot_api_dialog_id()))
+        Ok(get_share_id(peer.id().bot_api_dialog_id_unchecked()))
     }
 }

@@ -14,11 +14,12 @@ use crate::storage::Storage;
 use crate::types::{Result, SortMode};
 use crate::utils::MessageBuilder;
 use crate::utils::{parse_command, remove_first_word};
+use grammers_client::Client;
 use grammers_client::client::UpdatesConfiguration;
-use grammers_client::types::update::{CallbackQuery, Update};
-use grammers_client::{Client, InputMessage, button, reply_markup};
+use grammers_client::message::{Button, InputMessage, ReplyMarkup};
+use grammers_client::update::{CallbackQuery, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
-use grammers_session::defs::{PeerId, PeerKind};
+use grammers_session::types::{PeerId, PeerKind};
 use grammers_tl_types as tl;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -124,10 +125,12 @@ impl BotFrontend {
     pub async fn run(&mut self) -> Result<()> {
         // Create SenderPool and Client for this bot (all in one place)
         let pool = Self::create_sender_pool(&self.session);
-        let client = Client::new(&pool);
         let SenderPool {
-            runner, updates, ..
+            runner,
+            handle,
+            updates,
         } = pool;
+        let client = Client::new(handle);
 
         // Spawn the sender pool runner task
         tokio::spawn(runner.run());
@@ -230,7 +233,7 @@ impl BotFrontend {
                 // Edit the greeting message
                 if let Some(client) = client {
                     use crate::utils::get_share_id;
-                    use grammers_client::InputMessage;
+                    use grammers_client::message::InputMessage;
                     use grammers_tl_types as tl;
 
                     // Note: This may fail if admin hasn't started the bot or for group admins
@@ -345,13 +348,18 @@ impl BotFrontend {
 
         // Create update stream using the stored client
         let client_ref = self.client.as_ref().unwrap();
-        let mut updates = client_ref.stream_updates(
-            updates,
-            UpdatesConfiguration {
-                catch_up: false,
-                ..Default::default()
-            },
-        );
+        let mut updates = client_ref
+            .stream_updates(
+                updates,
+                UpdatesConfiguration {
+                    catch_up: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| {
+                crate::types::Error::Telegram(format!("Failed to start update stream: {}", e))
+            })?;
 
         loop {
             match updates.next().await {
@@ -384,18 +392,15 @@ impl BotFrontend {
     }
 
     /// Handle incoming bot message
-    async fn handle_update_message(
-        &self,
-        message: grammers_client::types::update::Message,
-    ) -> Result<()> {
+    async fn handle_update_message(&self, message: grammers_client::update::Message) -> Result<()> {
         // Get chat / sender info first so we can decide how to route a
         // file upload before falling back to the text-only path.
         let peer_id = message.peer_id();
-        let chat_id = peer_id.bot_api_dialog_id();
+        let chat_id = peer_id.bot_api_dialog_id_unchecked();
         let is_private = peer_id.kind() == PeerKind::User;
 
         let sender_id = if let Some(sender_peer) = message.sender() {
-            sender_peer.id().bot_api_dialog_id()
+            sender_peer.id().bot_api_dialog_id_unchecked()
         } else {
             warn!("[{}] message without sender", self.id);
             return Ok(());
@@ -501,7 +506,7 @@ impl BotFrontend {
         let (chat_id, message_id) = match &query.raw {
             tl::enums::Update::BotCallbackQuery(update) => {
                 let peer_id: PeerId = update.peer.clone().into();
-                (peer_id.bot_api_dialog_id(), update.msg_id)
+                (peer_id.bot_api_dialog_id_unchecked(), update.msg_id)
             }
             _ => {
                 warn!("[{}] callback query not from bot", self.id);
@@ -1129,10 +1134,10 @@ impl BotFrontend {
     async fn handle_import(
         &self,
         user_chat_id: i64,
-        message: &grammers_client::types::update::Message,
+        message: &grammers_client::update::Message,
     ) -> Result<()> {
         let doc = match message.media() {
-            Some(grammers_client::types::Media::Document(d)) => d,
+            Some(grammers_client::media::Media::Document(d)) => d,
             Some(_) => {
                 self.send_message(
                     user_chat_id,
@@ -1152,7 +1157,7 @@ impl BotFrontend {
                 return Ok(());
             }
         };
-        let doc_name = doc.name().to_string();
+        let doc_name = doc.name().unwrap_or_default().to_string();
         let mime = doc.mime_type();
         let is_json = doc_name.to_lowercase().ends_with(".json")
             || matches!(mime, Some(m) if m == "application/json");
@@ -1166,8 +1171,8 @@ impl BotFrontend {
             return Ok(());
         }
 
-        const MAX_BYTES: i64 = 500 * 1024 * 1024;
-        let doc_size = doc.size();
+        const MAX_BYTES: usize = 500 * 1024 * 1024;
+        let doc_size = doc.size().unwrap_or(0);
         info!(
             "[{}] import request: file={:?} size={} bytes",
             self.id, doc_name, doc_size
@@ -1197,7 +1202,7 @@ impl BotFrontend {
             .client
             .as_ref()
             .ok_or_else(|| crate::types::Error::Config("bot client not ready".into()))?;
-        let mut bytes: Vec<u8> = Vec::with_capacity(doc_size.max(0) as usize);
+        let mut bytes: Vec<u8> = Vec::with_capacity(doc_size);
         let mut download = client.iter_download(&doc);
         while let Some(chunk) = download
             .next()
@@ -1550,7 +1555,7 @@ impl BotFrontend {
 
         if !buttons.is_empty() {
             let markup = Self::create_inline_buttons_static(buttons);
-            message = message.reply_markup(&markup);
+            message = message.reply_markup(markup);
         }
 
         Ok(message)
@@ -1674,25 +1679,23 @@ impl BotFrontend {
     }
 
     /// Create inline button markup from button rows (static helper)
-    fn create_inline_buttons_static(
-        button_rows: Vec<Vec<(String, String)>>,
-    ) -> reply_markup::Inline {
-        let rows: Vec<Vec<button::Inline>> = button_rows
+    fn create_inline_buttons_static(button_rows: Vec<Vec<(String, String)>>) -> ReplyMarkup {
+        let rows: Vec<Vec<Button>> = button_rows
             .into_iter()
             .map(|row| {
                 row.into_iter()
                     .map(|(label, data)| {
                         if !data.is_empty() {
-                            button::inline(label, data.as_bytes())
+                            Button::data(label, data.as_bytes())
                         } else {
                             // Empty data means disabled button (just label)
-                            button::inline(label, NOOP_CALLBACK)
+                            Button::data(label, NOOP_CALLBACK)
                         }
                     })
                     .collect()
             })
             .collect();
-        reply_markup::inline(rows)
+        ReplyMarkup::from_buttons(&rows)
     }
 
     /// Render pagination + sort/reverse buttons
@@ -1766,7 +1769,7 @@ impl BotFrontend {
         // Add inline buttons if provided
         if let Some(button_rows) = buttons {
             let markup = Self::create_inline_buttons_static(button_rows);
-            message = message.reply_markup(&markup);
+            message = message.reply_markup(markup);
         }
 
         // Send message
@@ -1842,7 +1845,7 @@ impl BotFrontend {
         // Add inline buttons if provided
         if let Some(button_rows) = buttons {
             let markup = Self::create_inline_buttons_static(button_rows);
-            input = input.reply_markup(&markup);
+            input = input.reply_markup(markup);
         }
 
         // Edit message

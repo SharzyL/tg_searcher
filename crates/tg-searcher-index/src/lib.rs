@@ -622,7 +622,7 @@ impl Indexer {
             return Ok(None);
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         let segment = &segment_readers[rng.random_range(0..segment_readers.len())];
         let max_doc = segment.max_doc();
