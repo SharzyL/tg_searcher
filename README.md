@@ -2,7 +2,7 @@
 
 A Telegram message search bot with full-text search and Chinese word segmentation support.
 
-**Note**: This is a Rust rewrite of the original Python implementation. The Python version is deprecated and no longer maintained. All new development happens in Rust.
+**Note**: This is a Rust rewrite of the original Python implementation. The [Python version](https://github.com/SharzyL/tg_searcher/tree/legacy) is deprecated and no longer maintained.
 
 ## Overview
 
