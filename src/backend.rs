@@ -10,6 +10,10 @@ pub const STATUS_MESSAGE_LENGTH_LIMIT: usize = 4000;
 const DOWNLOAD_BATCH_SIZE: usize = 1000;
 /// Batch size for progress callbacks during message fetching (independent from indexing batches)
 const FETCH_PROGRESS_BATCH_SIZE: usize = 100;
+/// Minimum interval between admin notices for the same recurring error
+const ERROR_NOTICE_INTERVAL: Duration = Duration::from_secs(3600);
+/// Capacity of the error notice channel (excess notices are dropped and counted)
+const ERROR_NOTICE_CAPACITY: usize = 32;
 
 use crate::config::BackendConfig;
 use crate::session::ClientSession;
@@ -23,9 +27,52 @@ use grammers_client::update::{MessageDeletion, Update};
 use grammers_mtsender::{ConnectionParams, SenderPool};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tg_searcher_index::{IndexMsg, Indexer, SearchResult, SortMode};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 use tracing::{debug, error, info, warn};
+
+/// An error the admin should know about (e.g. indexing failing because the
+/// disk is full). Delivered to frontends via [`BackendBot::error_receiver`].
+#[derive(Debug, Clone)]
+pub struct ErrorNotice {
+    /// What the backend was doing when the error occurred
+    pub context: String,
+    /// The error message
+    pub error: String,
+    /// How many identical errors were suppressed since the previous notice
+    pub suppressed: usize,
+}
+
+/// Rate limiter for error notices. A recurring error (e.g. every incoming
+/// message failing to index) is reported once per [`ERROR_NOTICE_INTERVAL`],
+/// along with the number of occurrences suppressed in between.
+#[derive(Debug, Default)]
+struct ErrorThrottle {
+    last: Option<(String, Instant)>,
+    suppressed: usize,
+}
+
+impl ErrorThrottle {
+    /// Record an occurrence of `error`. Returns `Some(suppressed)` if a notice
+    /// should be sent, `None` if it should be suppressed.
+    fn record(&mut self, error: &str, now: Instant) -> Option<usize> {
+        if let Some((last_error, last_sent)) = &self.last
+            && last_error == error
+        {
+            if now.duration_since(*last_sent) < ERROR_NOTICE_INTERVAL {
+                self.suppressed += 1;
+                return None;
+            }
+        } else {
+            // A different error: counts for the previous one no longer apply
+            self.suppressed = 0;
+        }
+        let suppressed = std::mem::take(&mut self.suppressed);
+        self.last = Some((error.to_string(), now));
+        Some(suppressed)
+    }
+}
 
 /// Per-chat result of the startup catch-up. Reported to the frontend so the
 /// admin can see what (if anything) was downloaded for each monitored chat.
@@ -78,6 +125,13 @@ pub struct BackendBot {
     /// `catchup_done_tx` signal fires.
     catchup_results: Arc<Mutex<Vec<CatchupSummary>>>,
 
+    /// Error notices for the admin. Frontends subscribe before the backend
+    /// starts running so that no notice is missed.
+    error_tx: broadcast::Sender<ErrorNotice>,
+
+    /// Rate limiter for `error_tx`
+    error_throttle: std::sync::Mutex<ErrorThrottle>,
+
     /// Configuration
     monitor_all: bool,
 }
@@ -117,6 +171,8 @@ impl BackendBot {
             catchup_state: Arc::new(Mutex::new(HashMap::new())),
             catchup_done_tx: watch::channel(false).0,
             catchup_results: Arc::new(Mutex::new(Vec::new())),
+            error_tx: broadcast::channel(ERROR_NOTICE_CAPACITY).0,
+            error_throttle: std::sync::Mutex::new(ErrorThrottle::default()),
             monitor_all: config.config.monitor_all,
         })
     }
@@ -204,7 +260,7 @@ impl BackendBot {
             let update = match updates.next().await {
                 Ok(update) => update,
                 Err(e) => {
-                    error!("[{}] error getting update: {}", self.id, e);
+                    self.report_error("update stream failed, no longer indexing new messages", &e);
                     break;
                 }
             };
@@ -221,9 +277,12 @@ impl BackendBot {
                         self.id, share_id, msg_id
                     );
                     if let Err(e) = self.handle_new_message(message).await {
-                        error!(
-                            "[{}] error handling new message (chat={} msg_id={}): {}",
-                            self.id, share_id, msg_id, e
+                        self.report_error(
+                            &format!(
+                                "error handling new message (chat={} msg_id={})",
+                                share_id, msg_id
+                            ),
+                            &e,
                         );
                     }
                 }
@@ -238,9 +297,12 @@ impl BackendBot {
                         self.id, share_id, msg_id
                     );
                     if let Err(e) = self.handle_message_edited(message).await {
-                        error!(
-                            "[{}] error handling edited message (chat={} msg_id={}): {}",
-                            self.id, share_id, msg_id, e
+                        self.report_error(
+                            &format!(
+                                "error handling edited message (chat={} msg_id={})",
+                                share_id, msg_id
+                            ),
+                            &e,
                         );
                     }
                 }
@@ -255,9 +317,9 @@ impl BackendBot {
                         self.id, channel_id, msg_ids
                     );
                     if let Err(e) = self.handle_message_deleted(deletion).await {
-                        error!(
-                            "[{}] error handling message deletion (chat={:?}): {}",
-                            self.id, channel_id, e
+                        self.report_error(
+                            &format!("error handling message deletion (chat={:?})", channel_id),
+                            &e,
                         );
                     }
                 }
@@ -277,7 +339,7 @@ impl BackendBot {
         info!("[{}] catch-up starting for {} chat(s)", self.id, chat_count);
         for chat_id in chats {
             if let Err(e) = self.catch_up_chat(chat_id).await {
-                warn!("[{}] catch-up failed for chat {}: {}", self.id, chat_id, e);
+                self.report_error(&format!("catch-up failed for chat {}", chat_id), &e);
             }
         }
         info!("[{}] catch-up done", self.id);
@@ -291,6 +353,32 @@ impl BackendBot {
     /// subscription timing.
     pub fn catchup_done_receiver(&self) -> watch::Receiver<bool> {
         self.catchup_done_tx.subscribe()
+    }
+
+    /// Subscribe to error notices. Only notices sent after subscribing are
+    /// received, so subscribe before calling `run()`.
+    pub fn error_receiver(&self) -> broadcast::Receiver<ErrorNotice> {
+        self.error_tx.subscribe()
+    }
+
+    /// Log an error and notify the admin (rate-limited per distinct error).
+    fn report_error(&self, context: &str, err: &dyn std::fmt::Display) {
+        error!("[{}] {}: {}", self.id, context, err);
+        let error = err.to_string();
+        let Some(suppressed) = self
+            .error_throttle
+            .lock()
+            .unwrap()
+            .record(&error, Instant::now())
+        else {
+            return;
+        };
+        // Err only means no frontend is subscribed
+        let _ = self.error_tx.send(ErrorNotice {
+            context: context.to_string(),
+            error,
+            suppressed,
+        });
     }
 
     /// Per-chat catch-up summaries collected during the startup pass.
@@ -357,9 +445,9 @@ impl BackendBot {
             for msg_id in pending {
                 let url = format!("https://t.me/c/{}/{}", share_id, msg_id);
                 if let Err(e) = self.indexer.delete_document(&url).await {
-                    warn!(
-                        "[{}] buffered delete failed (msg {} chat {}): {}",
-                        self.id, msg_id, share_id, e
+                    self.report_error(
+                        &format!("buffered delete failed (msg {} chat {})", msg_id, share_id),
+                        &e,
                     );
                 }
             }
@@ -1018,5 +1106,39 @@ impl BackendBot {
             .ok_or_else(|| crate::types::Error::EntityNotFound(username.to_string()))?;
 
         Ok(get_share_id(peer.id().bot_api_dialog_id_unchecked()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_throttle_suppresses_repeats() {
+        let mut t = ErrorThrottle::default();
+        let t0 = Instant::now();
+        assert_eq!(t.record("disk full", t0), Some(0));
+        assert_eq!(t.record("disk full", t0 + Duration::from_secs(1)), None);
+        assert_eq!(t.record("disk full", t0 + Duration::from_secs(2)), None);
+        // Re-sent after the interval, carrying the suppressed count
+        assert_eq!(t.record("disk full", t0 + ERROR_NOTICE_INTERVAL), Some(2));
+        assert_eq!(
+            t.record(
+                "disk full",
+                t0 + ERROR_NOTICE_INTERVAL + Duration::from_secs(1)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_error_throttle_new_error_sent_immediately() {
+        let mut t = ErrorThrottle::default();
+        let t0 = Instant::now();
+        assert_eq!(t.record("disk full", t0), Some(0));
+        assert_eq!(t.record("disk full", t0), None);
+        assert_eq!(t.record("writer killed", t0), Some(0));
+        // Switching back counts as a new error again
+        assert_eq!(t.record("disk full", t0), Some(0));
     }
 }

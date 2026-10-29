@@ -7,7 +7,7 @@
 /// Maximum number of chat buttons to show in /chats command (to avoid hitting Telegram limits)
 const MAX_CHAT_BUTTONS: usize = 10;
 
-use crate::backend::BackendBot;
+use crate::backend::{BackendBot, ErrorNotice};
 use crate::config::{BotFrontendConfig, FrontendConfig};
 use crate::session::ClientSession;
 use crate::storage::Storage;
@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use tg_searcher_index::SearchResult;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 /// Callback data for disabled/non-interactive buttons
@@ -74,6 +75,11 @@ pub struct BotFrontend {
 
     /// Whether to register bot commands on startup
     register_commands: bool,
+
+    /// Backend error notices, subscribed at construction so that errors
+    /// occurring before `run()` (e.g. during startup catch-up) are not missed.
+    /// Taken by `run()`.
+    error_rx: Option<broadcast::Receiver<ErrorNotice>>,
 }
 
 impl BotFrontend {
@@ -102,6 +108,8 @@ impl BotFrontend {
             .await?,
         );
 
+        let error_rx = Some(backend.error_receiver());
+
         Ok(Self {
             id: frontend_id.to_string(),
             backend,
@@ -112,6 +120,7 @@ impl BotFrontend {
             admin_id: config.config.admin_id,
             username: None,
             register_commands,
+            error_rx,
         })
     }
 
@@ -339,6 +348,34 @@ impl BotFrontend {
                     if let Err(e) = result {
                         warn!(
                             "[{}] failed to send catch-up complete notice to admin: {}",
+                            frontend_id, e
+                        );
+                    }
+                }
+            });
+        }
+
+        // Forward backend errors (e.g. indexing failures) to admin.
+        if let (Some(mut rx), Some(client)) = (self.error_rx.take(), self.client.clone()) {
+            let admin_id = self.admin_id;
+            let backend_id = self.backend.id().to_string();
+            let frontend_id = self.id.clone();
+            tokio::spawn(async move {
+                loop {
+                    let msg = match rx.recv().await {
+                        Ok(notice) => Self::format_error_notice(&backend_id, &notice),
+                        Err(broadcast::error::RecvError::Lagged(n)) => format!(
+                            "⚠️ Backend <b>{}</b>: {} error notice(s) dropped, check the logs",
+                            html_escape::encode_text(&backend_id),
+                            n
+                        ),
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    };
+                    if let Err(e) =
+                        Self::send_message_with_client(&client, admin_id, &msg, None).await
+                    {
+                        warn!(
+                            "[{}] failed to send error notice to admin: {}",
                             frontend_id, e
                         );
                     }
@@ -1754,6 +1791,23 @@ impl BotFrontend {
     }
 
     /// Send a message to a chat (static helper)
+    /// Render a backend error notice as HTML for the admin.
+    fn format_error_notice(backend_id: &str, notice: &ErrorNotice) -> String {
+        let mut msg = format!(
+            "⚠️ Backend <b>{}</b>: {}\n<pre>{}</pre>",
+            html_escape::encode_text(backend_id),
+            html_escape::encode_text(&notice.context),
+            html_escape::encode_text(&notice.error),
+        );
+        if notice.suppressed > 0 {
+            msg.push_str(&format!(
+                "\n(repeated {} more time(s) since the last notice)",
+                notice.suppressed
+            ));
+        }
+        msg
+    }
+
     async fn send_message_with_client(
         client: &Client,
         chat_id: i64,

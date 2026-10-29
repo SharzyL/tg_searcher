@@ -163,25 +163,14 @@ async fn main() -> Result<()> {
 
     debug!("Created {} backend(s)", backends.len());
 
-    // Initialize and start all backends
     for backend in backends.values() {
         backend.initialize().await.map_err(|e| {
             anyhow::anyhow!("Failed to initialize backend '{}': {}", backend.id(), e)
         })?;
-
-        // Spawn backend event loop
-        let backend_clone = backend.clone();
-        let backend_id = backend.id().to_string();
-        backend_tasks.push(tokio::spawn(async move {
-            if let Err(e) = backend_clone.run().await {
-                error!("Backend '{}' event loop error: {}", backend_id, e);
-            }
-        }));
     }
 
-    debug!("Started all backend event loops");
-
-    // Initialize frontends with storage
+    // Initialize frontends with storage. Frontends subscribe to backend error
+    // notices on creation, so backends are started only after this loop.
     let mut frontend_tasks = Vec::new();
     let mut frontend_count = 0;
 
@@ -240,6 +229,19 @@ async fn main() -> Result<()> {
     if frontend_count == 0 {
         return Err(anyhow::anyhow!("No frontends configured"));
     }
+
+    // Start all backend event loops
+    for backend in backends.values() {
+        let backend_clone = backend.clone();
+        let backend_id = backend.id().to_string();
+        backend_tasks.push(tokio::spawn(async move {
+            if let Err(e) = backend_clone.run().await {
+                error!("Backend '{}' event loop error: {}", backend_id, e);
+            }
+        }));
+    }
+
+    debug!("Started all backend event loops");
 
     info!("Initialization complete. Press Ctrl+C to stop.");
 
