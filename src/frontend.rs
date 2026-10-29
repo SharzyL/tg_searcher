@@ -390,7 +390,8 @@ impl BotFrontend {
                 updates,
                 UpdatesConfiguration {
                     catch_up: false,
-                    ..Default::default()
+                    // Never silently drop user commands (default limit is 100)
+                    update_queue_limit: None,
                 },
             )
             .await

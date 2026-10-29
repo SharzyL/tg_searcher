@@ -259,9 +259,11 @@ async fn main() -> Result<()> {
 fn init_logging(debug: bool, debug_all: bool) {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-    // grammers_client::client::updates emits spurious "missing its hash" warnings because
-    // PeerAuthCache starts empty and isn't loaded from the session store (grammers limitation).
-    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=error,grammers_session=warn,tantivy=warn,os_info=warn,html5ever=warn";
+    // Keep grammers_client at warn: it reports lost updates only as warnings, e.g.
+    // "cannot getChannelDifference for … as we're missing its hash" or "updates were
+    // dropped because the update_queue_limit was exceeded". Each means messages were
+    // skipped by the live stream (the backend backfills such gaps, see GapDetector).
+    let dep_filter = "grammers_mtsender=warn,grammers_mtproto=warn,grammers_client=warn,grammers_session=warn,tantivy=warn,os_info=warn,html5ever=warn";
     let filter = if debug_all {
         EnvFilter::new("debug")
     } else if debug {
