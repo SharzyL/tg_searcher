@@ -502,12 +502,9 @@ impl BackendBot {
             {
                 // Nothing to index: the skipped ids were media or deleted messages
                 Ok(r) if r.indexed_count == 0 => {}
-                Ok(r) => self.report_error(
-                    &format!(
-                        "backfilled {} msg(s) in chat {} (msg_id {}..={})",
-                        r.indexed_count, gap.chat_id, gap.min_msg_id, gap.max_msg_id
-                    ),
-                    &"live update stream skipped messages",
+                Ok(r) => warn!(
+                    "[{}] backfilled {} msg(s) skipped by live updates in chat {} (msg_id {}..={})",
+                    self.id, r.indexed_count, gap.chat_id, gap.min_msg_id, gap.max_msg_id
                 ),
                 Err(e) => self.report_error(
                     &format!(
